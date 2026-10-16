@@ -84,18 +84,18 @@ Details: [docs/BRANCHING-STRATEGY.md](docs/BRANCHING-STRATEGY.md), [docs/MIGRATI
 | `production-promote.yml` (`Promote to Production`) | Push to `main` (from `staging`) | Snapshot → COW rehearsal migrate → Production stable (`production-platform` / `production-database`) |
 | `promote-environment.yml` | `workflow_call` | Shared promote implementation |
 
-GitHub environments. Publish secrets from outside this repo with `~/git_projects/lakebase-dotnet-devops-env/scripts/publish-github-secrets.sh`. Do not copy env files or secret values into git.
+Each stage uses a pair of GitHub environments, so control-plane credentials never reach database jobs or untrusted PR code. Setup steps, secrets, and variables: [GitHub setup](#github-setup).
 
-| Environment | Trust boundary |
-|-------------|----------------|
-| `dev-platform` | Dev control plane |
-| `dev-database` | Dev Postgres / migrate |
-| `staging-platform` | Staging control plane (restrict to `staging`) |
-| `staging-database` | Staging Postgres |
-| `production-platform` | Production control plane (restrict to `main`) |
-| `production-database` | Production Postgres |
+| Environment | Trust boundary | Deployment branches |
+|-------------|----------------|---------------------|
+| `dev-platform` | Dev control plane | `develop`, `main` |
+| `dev-database` | Dev Postgres / migrate | `develop`, `main` |
+| `staging-platform` | Staging control plane | `staging` |
+| `staging-database` | Staging Postgres | `staging` |
+| `production-platform` | Production control plane | `main` |
+| `production-database` | Production Postgres | `main` |
 
-Secret **names** match the existing pattern: `DATABRICKS_HOST`, `LAKEBASE_PLATFORM_*`, `LAKEBASE_DATABASE_*`, `LAKEBASE_PROJECT_ID`, `LAKEBASE_PARENT_BRANCH_ID`, `LAKEBASE_APP_SP_ID`, `LAKEBASE_PROD_ENDPOINT`, `LAKEBASE_PROD_ENDPOINT_PATH`, `LAKEBASE_ALLOW_BRANCH_DELETE`.
+The Dev pair allows `main` because `pr-lakebase.yml` runs as `pull_request_target`, which loads workflow code from the default branch.
 
 Solo-safe GitHub rulesets require PRs and automated checks but zero human approvals. All actions are pinned; privileged jobs use branch-restricted environments.
 
@@ -109,6 +109,139 @@ Runners are split by trust. Set these repository variables to change them:
 Both default to `self-hosted` today, so PR code shares the runner with privileged jobs. That is a known residual risk: PR code could tamper with a runner that later holds production credentials. Point `LAKEBASE_UNTRUSTED_RUNNER` at an ephemeral or separate runner pool when one is available. Every job sets up .NET through `.github/actions/setup-dotnet-isolated`, which builds the CLI once (`$LAKEBASE_CLI`) from trusted code.
 
 Security posture, residual risks, and GitHub OIDC (secretless CI) setup: [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
+
+## GitHub setup
+
+One-time setup for a new copy of this repo. Follow the steps in order: a push to `main`, `staging`, or `develop` starts a promote run, so the runner, environments, and secrets must exist before those branches do. Never commit env files or secret values.
+
+Prerequisites:
+
+- Dev, Staging, and Production Lakebase projects, each with a stable branch (usually `production`).
+- Per stage, two different service principals: a **platform SP** (branches, roles, snapshots) and a **database SP** (the app SP, which runs Flyway and the app).
+- `gh` signed in as a repo admin with the `repo` and `workflow` scopes (`gh auth refresh --scopes workflow`).
+
+```bash
+REPO=<owner>/lakebase-dotnet-devops
+```
+
+### 1. Register a self-hosted runner
+
+Every job runs on the `self-hosted` label unless the runner variables above say otherwise. Add a runner under **Settings → Actions → Runners → New self-hosted runner**, or get a registration token with:
+
+```bash
+gh api -X POST "repos/$REPO/actions/runners/registration-token" --jq .token
+```
+
+The runner needs `git`, `curl`, and `jq`. Jobs install .NET (from `global.json`) and the pinned Flyway CLI themselves. A runner is registered to one repository, so a second copy of this repo needs its own runner; a separate install directory on the same machine works.
+
+### 2. Create the environments and branch policies
+
+```bash
+add_env() {
+  local env="$1"; shift
+  echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' \
+    | gh api -X PUT "repos/$REPO/environments/$env" --input - >/dev/null
+  for branch in "$@"; do
+    gh api -X POST "repos/$REPO/environments/$env/deployment-branch-policies" \
+      -f name="$branch" -f type=branch >/dev/null
+  done
+}
+
+add_env dev-platform develop main
+add_env dev-database develop main
+add_env staging-platform staging
+add_env staging-database staging
+add_env production-platform main
+add_env production-database main
+```
+
+### 3. Set secrets and variables
+
+Every stage uses the same names with its own values.
+
+`*-platform` environments (all secrets):
+
+| Secret | Value |
+|--------|-------|
+| `DATABRICKS_HOST` | Workspace URL, e.g. `https://<workspace>.cloud.databricks.com` |
+| `LAKEBASE_PLATFORM_CLIENT_ID` / `LAKEBASE_PLATFORM_CLIENT_SECRET` | Platform SP OAuth client id / secret |
+| `LAKEBASE_PROJECT_ID` | This stage's Lakebase project id |
+| `LAKEBASE_PARENT_BRANCH_ID` | Stable branch id (usually `production`) |
+| `LAKEBASE_APP_SP_ID` | Database (app) SP application id |
+| `LAKEBASE_DEV_GROUP` | Optional, `dev-platform` only: workspace group granted write on feature branches |
+
+`*-database` environments:
+
+| Name | Kind | Value |
+|------|------|-------|
+| `DATABRICKS_HOST` | secret | Workspace URL |
+| `LAKEBASE_DATABASE_CLIENT_ID` / `LAKEBASE_DATABASE_CLIENT_SECRET` | secret | Database (app) SP OAuth client id / secret |
+| `LAKEBASE_DATABASE_USERNAME` | secret | Postgres role that currently owns the tables, normally the database SP application id ([details](docs/GITHUB-RULESETS.md#github-environments-admin)) |
+| `LAKEBASE_PROD_ENDPOINT` | secret | This stage's stable endpoint **host**, e.g. `ep-<name>.database.<region>.cloud.databricks.com` |
+| `LAKEBASE_PROJECT_ID` | variable | This stage's Lakebase project id |
+| `LAKEBASE_PARENT_BRANCH_ID` | variable | Stable branch id (defaults to `production`) |
+| `LAKEBASE_APP_SP_ID` | variable | Optional, `dev-database` only; defaults to `LAKEBASE_DATABASE_CLIENT_ID` |
+
+`LAKEBASE_PROD_ENDPOINT` is the stable endpoint of *that stage's* project, not a pointer at the Production project.
+
+`gh secret set` without `--body` prompts for each value, which keeps secrets out of shell history and process arguments:
+
+```bash
+for stage in dev staging production; do
+  for name in DATABRICKS_HOST LAKEBASE_PLATFORM_CLIENT_ID LAKEBASE_PLATFORM_CLIENT_SECRET \
+              LAKEBASE_PROJECT_ID LAKEBASE_PARENT_BRANCH_ID LAKEBASE_APP_SP_ID; do
+    echo "$stage-platform: $name"
+    gh secret set "$name" --env "$stage-platform" --repo "$REPO"
+  done
+  for name in DATABRICKS_HOST LAKEBASE_DATABASE_CLIENT_ID LAKEBASE_DATABASE_CLIENT_SECRET \
+              LAKEBASE_DATABASE_USERNAME LAKEBASE_PROD_ENDPOINT; do
+    echo "$stage-database: $name"
+    gh secret set "$name" --env "$stage-database" --repo "$REPO"
+  done
+  read -r -p "$stage Lakebase project id: " project_id
+  gh variable set LAKEBASE_PROJECT_ID --env "$stage-database" --repo "$REPO" --body "$project_id"
+  gh variable set LAKEBASE_PARENT_BRANCH_ID --env "$stage-database" --repo "$REPO" --body production
+done
+```
+
+Optional variables:
+
+| Variable | Scope | Purpose |
+|----------|-------|---------|
+| `LAKEBASE_TRUSTED_RUNNER` / `LAKEBASE_UNTRUSTED_RUNNER` | repository | Runner labels (default `self-hosted`) |
+| `LAKEBASE_FEATURE_TTL_HOURS` | `dev-platform` | Feature-branch TTL, clamped to 24 to 168 (default 168) |
+
+To replace the client secrets with GitHub OIDC, see [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
+
+### 4. Push `main`, then create `staging` and `develop`
+
+Keep `main` as the default branch and create the other two from it:
+
+```bash
+git push <remote> main
+main_sha="$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)"
+for branch in staging develop; do
+  gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$main_sha"
+done
+```
+
+Each push runs that stage's promote. On empty stables the first run applies every Flyway version, which initializes the stage. Check the runs under **Actions** before continuing.
+
+### 5. Apply the rulesets
+
+Apply them only after the branches exist, because they block direct pushes. Commands: [docs/GITHUB-RULESETS.md](docs/GITHUB-RULESETS.md#apply-with-gh).
+
+### Verify
+
+```bash
+gh api "repos/$REPO/environments" --jq '.environments[].name'
+for stage in dev staging production; do
+  gh secret list --env "$stage-platform" --repo "$REPO"
+  gh secret list --env "$stage-database" --repo "$REPO"
+  gh variable list --env "$stage-database" --repo "$REPO"
+done
+gh api "repos/$REPO/actions/runners" --jq '.runners[] | .name + " " + .status'
+```
 
 ## Using the library in an app
 

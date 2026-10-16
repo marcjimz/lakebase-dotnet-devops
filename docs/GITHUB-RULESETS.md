@@ -91,11 +91,7 @@ gh api -X PUT "repos/$REPO/rulesets/$RULESET_ID" --input payload.json
 
 ## GitHub environments (admin)
 
-Create and populate the six environments from the bootstrap package (not this repo):
-
-`~/git_projects/lakebase-dotnet-devops-env/scripts/publish-github-secrets.sh`
-
-That script owns `dev-platform`, `dev-database`, `staging-platform`, `staging-database`, `production-platform`, and `production-database` (including branch policies). Do not copy env files or secret values into this repository.
+Create the six environments (`dev-platform`, `dev-database`, `staging-platform`, `staging-database`, `production-platform`, `production-database`), their branch policies, secrets, and variables with the manual steps in [README → GitHub setup](../README.md#github-setup). Do not copy env files or secret values into this repository.
 
 Active protections:
 
@@ -122,7 +118,8 @@ Secret names (stdin to `gh secret set --env`, never argv):
 | `LAKEBASE_DATABASE_CLIENT_SECRET` | no | yes |
 | `LAKEBASE_DATABASE_USERNAME` | no | yes |
 | `LAKEBASE_PROD_ENDPOINT` | no | yes (stable **host**) |
-| `LAKEBASE_PROD_ENDPOINT_PATH` | no | yes (stable endpoint path) |
+
+Each `*-database` environment also needs the **variables** `LAKEBASE_PROJECT_ID` and `LAKEBASE_PARENT_BRANCH_ID` (used to mint the database credential).
 
 Repo / `dev-database` variable `LAKEBASE_APP_SP_ID`: App SP application (client) id. Feature-branch create transfers table ownership to this role so developers can `lakebase db migrate` locally with the same identity in `.env.database`.
 

@@ -57,7 +57,7 @@ src/Lakebase/
 
 ## CI secrets
 
-Six GitHub environments: `dev-platform`, `dev-database`, `staging-platform`, `staging-database`, `production-platform`, `production-database`. Publish them with `~/git_projects/lakebase-dotnet-devops-env/scripts/publish-github-secrets.sh` (outside this repo). See [BRANCHING-STRATEGY.md](BRANCHING-STRATEGY.md) and [GITHUB-RULESETS.md](GITHUB-RULESETS.md).
+Six GitHub environments: `dev-platform`, `dev-database`, `staging-platform`, `staging-database`, `production-platform`, `production-database`. Set them up with [README → GitHub setup](../README.md#github-setup). See [BRANCHING-STRATEGY.md](BRANCHING-STRATEGY.md) and [GITHUB-RULESETS.md](GITHUB-RULESETS.md).
 
 | Secret | Flow |
 |--------|------|
@@ -65,4 +65,4 @@ Six GitHub environments: `dev-platform`, `dev-database`, `staging-platform`, `st
 | `LAKEBASE_PLATFORM_CLIENT_ID` / `LAKEBASE_PLATFORM_CLIENT_SECRET` | Platform environments |
 | `LAKEBASE_PROJECT_ID` / `LAKEBASE_PARENT_BRANCH_ID` / `LAKEBASE_APP_SP_ID` | Platform |
 | `LAKEBASE_DATABASE_CLIENT_ID` / `SECRET` / `USERNAME` | Database environments |
-| `LAKEBASE_PROD_ENDPOINT` / `LAKEBASE_PROD_ENDPOINT_PATH` | That environment's stable host + endpoint path |
+| `LAKEBASE_PROD_ENDPOINT` | Database environments: that environment's stable endpoint host |

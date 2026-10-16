@@ -24,12 +24,12 @@ See [PLATFORM-VS-DATABASE.md](PLATFORM-VS-DATABASE.md) and [GITHUB-RULESETS.md](
 
 ## GitHub environments
 
-Platform jobs and database jobs use **separate** GitHub environments so control-plane credentials never reach untrusted PR code. Publish with `~/git_projects/lakebase-dotnet-devops-env/scripts/publish-github-secrets.sh`.
+Platform jobs and database jobs use **separate** GitHub environments so control-plane credentials never reach untrusted PR code. Setup steps: [README → GitHub setup](../README.md#github-setup).
 
 | GitHub environment | Used by | Typical secrets |
 |--------------------|---------|-----------------|
 | `dev-platform` | trusted `pr-lakebase.yml`, manual feature lifecycle from Git `develop`, `dev-promote.yml` | `DATABRICKS_HOST`, `LAKEBASE_PLATFORM_*`, `LAKEBASE_PROJECT_ID`, `LAKEBASE_PARENT_BRANCH_ID`, `LAKEBASE_APP_SP_ID`, `LAKEBASE_ALLOW_BRANCH_DELETE` |
-| `dev-database` | trusted PR schema migrate, `dev-promote.yml` | `DATABRICKS_HOST`, `LAKEBASE_DATABASE_*`, `LAKEBASE_PROD_ENDPOINT`, `LAKEBASE_PROD_ENDPOINT_PATH` |
+| `dev-database` | trusted PR schema migrate, `dev-promote.yml` | `DATABRICKS_HOST`, `LAKEBASE_DATABASE_*`, `LAKEBASE_PROD_ENDPOINT`; variables `LAKEBASE_PROJECT_ID`, `LAKEBASE_PARENT_BRANCH_ID` |
 | `staging-platform` | Staging promote (branch/role/snapshot) | same platform pattern, Staging project |
 | `staging-database` | Staging migrate/test | same database pattern, Staging project |
 | `production-platform` | Production promote (branch/role/snapshot) | same platform pattern, Production project |
