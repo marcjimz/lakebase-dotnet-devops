@@ -1,0 +1,13 @@
+# CODEOWNERS is advisory during solo testing; active rulesets do not require its approval.
+# The repository owner can complete the full promotion flow without another reviewer.
+#
+# Replace or augment this owner with a platform/DBA team when independent review is enabled.
+
+/.github/                       @sghanta-sf
+/db/migrations/                  @sghanta-sf
+/conf/flyway.conf                @sghanta-sf
+/src/SampleApp/Models/           @sghanta-sf
+/src/SampleApp/Data/             @sghanta-sf
+/src/Lakebase/Database/          @sghanta-sf
+/**/*.sql                        @sghanta-sf
+/docs/MIGRATION-GUIDE.md         @sghanta-sf

@@ -1,0 +1,201 @@
+name: Lakebase Dev Feature Branch
+on:
+  workflow_dispatch:
+    inputs:
+      branch_name:
+        description: Name of the optional Dev Lakebase branch
+        required: true
+        type: string
+      operation:
+        description: Create/recreate or delete the branch
+        required: true
+        type: choice
+        default: create
+        options: [create, delete]
+
+# Trusted manual helper for optional Dev feature branches.
+# Run the dispatch from Git `develop` or `main` (both are allowed on `dev-platform`).
+permissions: {}
+
+concurrency:
+  group: lakebase-github-branch-${{ inputs.branch_name }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  MSBUILDDISABLENODEREUSE: "1"
+  GITHUB_BRANCH_NAME: ${{ inputs.branch_name }}
+
+jobs:
+  sync:
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: dev-platform
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    outputs:
+      host: ${{ steps.branch.outputs.host }}
+      endpoint_id: ${{ steps.branch.outputs.endpoint_id }}
+      branch_name: ${{ steps.branch.outputs.branch_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Detect Flyway schema changes
+        id: schema
+        if: inputs.operation == 'create'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FORCE: "true"
+        run: |
+          set -euo pipefail
+          if [ -f .github/scripts/detect-schema-changes.sh ]; then
+            bash .github/scripts/detect-schema-changes.sh
+          else
+            echo "::warning::detect-schema-changes.sh is not on the default branch yet; creating the Lakebase branch"
+            echo "schema_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create or delete Dev Lakebase branch
+        id: branch
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          LAKEBASE_PLATFORM_CLIENT_ID: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_ID }}
+          LAKEBASE_PLATFORM_CLIENT_SECRET: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_SECRET }}
+          LAKEBASE_PROJECT_ID: ${{ secrets.LAKEBASE_PROJECT_ID }}
+          LAKEBASE_MAIN_BRANCH_ID: ${{ secrets.LAKEBASE_PARENT_BRANCH_ID }}
+          LAKEBASE_DEV_GROUP: ${{ secrets.LAKEBASE_DEV_GROUP }}
+          LAKEBASE_APP_SP_ID: ${{ secrets.LAKEBASE_APP_SP_ID }}
+          LAKEBASE_ALLOW_BRANCH_DELETE: "true"
+          FEATURE_TTL_HOURS: ${{ vars.LAKEBASE_FEATURE_TTL_HOURS }}
+          OPERATION: ${{ inputs.operation }}
+          SCHEMA_CHANGED: ${{ steps.schema.outputs.schema_changed }}
+        run: |
+          set -euo pipefail
+
+          skipped_ref() {
+            # Match case-insensitively: the CLI lowercases names, so "Production" maps to "production".
+            local n
+            n="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+            case "$n" in
+              main|master|develop|staging|production|development|"") return 0 ;;
+            esac
+            case "$n" in
+              dependabot/*|dependabot-*) return 0 ;;
+            esac
+            return 1
+          }
+
+          ttl="${FEATURE_TTL_HOURS:-168}"
+          if [ "$ttl" -lt 24 ]; then ttl=24; fi
+          if [ "$ttl" -gt 168 ]; then ttl=168; fi
+
+          delete_one() {
+            local name="$1"
+            if skipped_ref "$name"; then
+              echo "Skipping protected or empty GitHub ref: $name"
+              return 0
+            fi
+            echo "Deleting Dev Lakebase branch for '$name' (TTL cleanup / PR close)"
+            dotnet "$LAKEBASE_CLI" \
+              lakebase platform branch delete "$name" --ignore-missing
+          }
+
+          if [ "$OPERATION" = "delete" ]; then
+            delete_one "$GITHUB_BRANCH_NAME"
+            exit 0
+          fi
+
+          name="$GITHUB_BRANCH_NAME"
+          if skipped_ref "$name"; then
+            echo "Skipping protected or empty GitHub ref: $name"
+            exit 0
+          fi
+
+          if [ "${SCHEMA_CHANGED:-true}" != "true" ]; then
+            echo "No Flyway path changes vs develop/default; skipping Dev Lakebase branch create"
+            exit 0
+          fi
+
+          echo "Creating Dev Lakebase branch '$name' from Dev stable (TTL ${ttl}h)"
+          dotnet "$LAKEBASE_CLI" \
+            lakebase platform branch create "$name" --ttl-hours "$ttl" --no-write-env
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+      - name: Audit (no secrets)
+        if: always()
+        env:
+          OPERATION: ${{ inputs.operation }}
+          REF_NAME: ${{ env.GITHUB_BRANCH_NAME }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "## Dev feature-branch sync"
+            echo "- operation: $OPERATION"
+            echo "- github ref: $REF_NAME"
+            echo "- actor: $ACTOR"
+            echo "- sha: $SHA"
+            echo "- result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  grant-app-ddl:
+    needs: sync
+    if: >
+      needs.sync.result == 'success' &&
+      needs.sync.outputs.host != '' &&
+      inputs.operation == 'create'
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: dev-database
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Mint table-owner credential
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          CLIENT_ID: ${{ secrets.LAKEBASE_DATABASE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.LAKEBASE_DATABASE_CLIENT_SECRET }}
+          DB_USERNAME: ${{ secrets.LAKEBASE_DATABASE_USERNAME }}
+          DB_HOST: ${{ needs.sync.outputs.host }}
+          LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+          DB_BRANCH: ${{ needs.sync.outputs.branch_name }}
+          DB_ENDPOINT_ID: ${{ needs.sync.outputs.endpoint_id }}
+        run: |
+          set -euo pipefail
+          [ -f .github/scripts/mint-lakebase-credential.sh ] || {
+            echo "::error::Trusted mint-lakebase-credential.sh is missing from the default branch"
+            exit 1
+          }
+          bash .github/scripts/mint-lakebase-credential.sh
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Transfer application DDL ownership to app SP
+        env:
+          LAKEBASE_APP_SP_ID: ${{ vars.LAKEBASE_APP_SP_ID }}
+          LAKEBASE_APP_SP_ID_SECRET: ${{ secrets.LAKEBASE_APP_SP_ID }}
+          LAKEBASE_DATABASE_CLIENT_ID: ${{ secrets.LAKEBASE_DATABASE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          app="${LAKEBASE_APP_SP_ID:-${LAKEBASE_APP_SP_ID_SECRET:-${LAKEBASE_DATABASE_CLIENT_ID:-}}}"
+          [ -n "$app" ] || { echo "::error::Set LAKEBASE_APP_SP_ID or LAKEBASE_DATABASE_CLIENT_ID in dev-database"; exit 1; }
+          dotnet "$LAKEBASE_CLI" lakebase db grant-ddl --to "$app"
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true

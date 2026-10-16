@@ -1,0 +1,26 @@
+name: Promote to Production
+on:
+  push:
+    branches: [main]
+
+# Merge staging → main: snapshot Production stable, migrate a COW rehearsal
+# branch, then replay Flyway on Production stable only if rehearsal succeeds.
+permissions: {}
+
+concurrency:
+  group: lakebase-production-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    permissions:
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    uses: ./.github/workflows/promote-environment.yml
+    with:
+      platform_environment: production-platform
+      database_environment: production-database
+      environment_label: Production
+      require_head_ref: staging
+      rehearse_on_cow: true

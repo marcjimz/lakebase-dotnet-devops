@@ -1,0 +1,25 @@
+name: Promote to Staging
+on:
+  push:
+    branches: [staging]
+
+# Merge develop → staging replays Flyway on lakebase-dotnet-staging/production.
+# Schema was already proven on the isolated Dev PR branch and Dev stable.
+permissions: {}
+
+concurrency:
+  group: lakebase-staging-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    permissions:
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    uses: ./.github/workflows/promote-environment.yml
+    with:
+      platform_environment: staging-platform
+      database_environment: staging-database
+      environment_label: Staging
+      require_head_ref: develop

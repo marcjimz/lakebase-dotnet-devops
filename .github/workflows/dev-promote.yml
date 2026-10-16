@@ -1,0 +1,32 @@
+name: Promote to Dev
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Optional Git branch or SHA (empty uses the selected workflow ref)
+        required: false
+        type: string
+
+# Merge to Git develop replays Flyway on lakebase-dotnet-dev/production.
+# Feature PR migrations were already proven on an isolated `pr-N` branch.
+# Does not promote Staging or Production. workflow_dispatch is an emergency override.
+permissions: {}
+
+concurrency:
+  group: lakebase-dev-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    permissions:
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    uses: ./.github/workflows/promote-environment.yml
+    with:
+      platform_environment: dev-platform
+      database_environment: dev-database
+      environment_label: Dev
+      git_ref: ${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || '' }}

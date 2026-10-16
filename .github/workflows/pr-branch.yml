@@ -1,0 +1,84 @@
+name: Lakebase PR Branch
+on:
+  pull_request:
+    branches: [develop, staging, main]
+    types: [opened, reopened, synchronize]
+
+# Untrusted lane: this workflow runs PR-controlled YAML and code.
+# It must never receive a GitHub environment or long-lived Lakebase credentials.
+#   schema              - GitHub compare of Flyway paths; no Lakebase secrets
+#   validate            - PR code, no Lakebase secrets
+permissions: {}
+
+concurrency:
+  group: lakebase-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  MSBUILDDISABLENODEREUSE: "1"
+
+jobs:
+  schema:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ vars.LAKEBASE_UNTRUSTED_RUNNER || 'self-hosted' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 5
+    outputs:
+      schema_changed: ${{ steps.detect.outputs.schema_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Detect Flyway schema changes
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/scripts/detect-schema-changes.sh
+
+  validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ vars.LAKEBASE_UNTRUSTED_RUNNER || 'self-hosted' }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up .NET (isolated)
+        uses: ./.github/actions/setup-dotnet-isolated
+      - name: Restore packages (locked)
+        timeout-minutes: 10
+        run: dotnet restore SampleApp.sln --locked-mode
+      - name: Build
+        timeout-minutes: 10
+        run: dotnet build SampleApp.sln --no-restore -nodeReuse:false -p:UseSharedCompilation=false
+      - name: Unit tests (no live database)
+        timeout-minutes: 10
+        run: dotnet test src/SampleApp.Tests --no-restore --filter "Category!=Integration" --logger "trx" -p:UseSharedCompilation=false
+      - name: Offline Flyway SQL validation
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          dotnet run --no-build --project src/Lakebase.Cli -- lakebase db lint | tee artifacts/sql-manifest.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        continue-on-error: true
+        with:
+          name: sql-manifest-${{ github.sha }}
+          path: artifacts/sql-manifest.txt
+          retention-days: 30
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true

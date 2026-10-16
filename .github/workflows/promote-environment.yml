@@ -1,0 +1,486 @@
+name: Promote environment (reusable)
+on:
+  workflow_call:
+    inputs:
+      platform_environment:
+        description: GitHub environment with platform SP secrets (e.g. staging-platform)
+        required: true
+        type: string
+      database_environment:
+        description: GitHub environment with database SP secrets (e.g. staging-database)
+        required: true
+        type: string
+      environment_label:
+        required: true
+        type: string
+      require_head_ref:
+        description: When set, the merged PR must come from this GitHub branch
+        type: string
+        required: false
+        default: ""
+      git_ref:
+        description: Git SHA or ref to promote (empty = github.sha)
+        type: string
+        required: false
+        default: ""
+      rehearse_on_cow:
+        description: >
+          Create a copy-on-write branch of this environment's stable, migrate and
+          validate there, then migrate stable only if rehearsal succeeds. Use for
+          Production. The pre-migrate snapshot is never migrated.
+        type: boolean
+        required: false
+        default: false
+
+# Caller sets concurrency. Jobs use environment-scoped GitHub environments.
+permissions: {}
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  MSBUILDDISABLENODEREUSE: "1"
+
+jobs:
+  prepare:
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 10
+    outputs:
+      snapshot_name: ${{ steps.meta.outputs.snapshot_name }}
+      rehearsal_name: ${{ steps.meta.outputs.rehearsal_name }}
+      sha: ${{ steps.meta.outputs.sha }}
+      pr_number: ${{ steps.meta.outputs.pr_number }}
+      head_ref: ${{ steps.meta.outputs.head_ref }}
+      schema_changed: ${{ steps.schema.outputs.schema_changed }}
+    steps:
+      - name: Resolve immutable merge SHA
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          GIT_REF: ${{ inputs.git_ref }}
+          REQUIRE_HEAD_REF: ${{ inputs.require_head_ref }}
+          LABEL: ${{ inputs.environment_label }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GIT_REF:-}" ]; then
+            SHA=$(gh api "repos/$REPO/commits/${GIT_REF}" --jq .sha)
+            [ -n "$SHA" ] || { echo "::error::Could not resolve git_ref '$GIT_REF'"; exit 1; }
+          fi
+          short="${SHA:0:12}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "snapshot_name=pre-migrate-$short" >> "$GITHUB_OUTPUT"
+          echo "rehearsal_name=rehearse-$short" >> "$GITHUB_OUTPUT"
+          echo "pr_number=" >> "$GITHUB_OUTPUT"
+          echo "head_ref=" >> "$GITHUB_OUTPUT"
+
+          pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq \
+            "[.[] | select(.merged_at != null and .merge_commit_sha == \"$SHA\" and .head.repo.full_name == \"$REPO\")][0] // empty | [.number, .head.ref, .base.ref] | @tsv" \
+            || true)
+          if [ -z "$pr" ]; then
+            echo "::warning::No merged PR found for $SHA"
+            if [ -n "${REQUIRE_HEAD_REF:-}" ]; then
+              echo "::error::${LABEL} promote requires a merge from GitHub branch '$REQUIRE_HEAD_REF'"
+              exit 1
+            fi
+            exit 0
+          fi
+          number=${pr%%$'\t'*}
+          rest=${pr#*$'\t'}
+          head_ref=${rest%%$'\t'*}
+          base_ref=${rest#*$'\t'}
+          {
+            echo "pr_number=$number"
+            echo "head_ref=$head_ref"
+            echo "snapshot_name=pre-migrate-pr-$number-$short"
+            echo "rehearsal_name=rehearse-pr-$number-$short"
+          } >> "$GITHUB_OUTPUT"
+          echo "Merged PR #$number ($head_ref → $base_ref) at immutable SHA $SHA"
+          if [ -n "${REQUIRE_HEAD_REF:-}" ] && [ "$head_ref" != "$REQUIRE_HEAD_REF" ]; then
+            echo "::error::${LABEL} promote requires head branch '$REQUIRE_HEAD_REF' (got '$head_ref')"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.meta.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Detect Flyway schema changes
+        id: schema
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.meta.outputs.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FORCE: ${{ inputs.git_ref != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ -f .github/scripts/detect-schema-changes.sh ]; then
+            bash .github/scripts/detect-schema-changes.sh
+          else
+            echo "::warning::detect-schema-changes.sh missing on this SHA; treating as a schema change"
+            echo "schema_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  snapshot-stable:
+    needs: prepare
+    if: needs.prepare.outputs.schema_changed == 'true'
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.platform_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    concurrency:
+      group: lakebase-${{ inputs.platform_environment }}
+      cancel-in-progress: false
+    outputs:
+      snapshot_name: ${{ needs.prepare.outputs.snapshot_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Snapshot stable (recovery evidence, not automatic rollback)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          LAKEBASE_PLATFORM_CLIENT_ID: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_ID }}
+          LAKEBASE_PLATFORM_CLIENT_SECRET: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_SECRET }}
+          LAKEBASE_PROJECT_ID: ${{ secrets.LAKEBASE_PROJECT_ID }}
+          LAKEBASE_MAIN_BRANCH_ID: ${{ secrets.LAKEBASE_PARENT_BRANCH_ID }}
+          LAKEBASE_APP_SP_ID: ${{ secrets.LAKEBASE_APP_SP_ID }}
+          LAKEBASE_ALLOW_BRANCH_DELETE: "true"
+          SNAPSHOT_NAME: ${{ needs.prepare.outputs.snapshot_name }}
+        run: |
+          set -euo pipefail
+          dotnet "$LAKEBASE_CLI" \
+            lakebase platform branch create "$SNAPSHOT_NAME" \
+              --ttl-hours 48 --no-write-env
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  provision-rehearsal:
+    needs: [prepare, snapshot-stable]
+    if: >
+      needs.prepare.outputs.schema_changed == 'true' &&
+      inputs.rehearse_on_cow == true
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.platform_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    concurrency:
+      group: lakebase-${{ inputs.platform_environment }}
+      cancel-in-progress: false
+    outputs:
+      host: ${{ steps.branch.outputs.host }}
+      endpoint_id: ${{ steps.branch.outputs.endpoint_id }}
+      branch_name: ${{ steps.branch.outputs.branch_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Create COW rehearsal branch from stable
+        id: branch
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          LAKEBASE_PLATFORM_CLIENT_ID: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_ID }}
+          LAKEBASE_PLATFORM_CLIENT_SECRET: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_SECRET }}
+          LAKEBASE_PROJECT_ID: ${{ secrets.LAKEBASE_PROJECT_ID }}
+          LAKEBASE_MAIN_BRANCH_ID: ${{ secrets.LAKEBASE_PARENT_BRANCH_ID }}
+          LAKEBASE_APP_SP_ID: ${{ secrets.LAKEBASE_APP_SP_ID }}
+          LAKEBASE_ALLOW_BRANCH_DELETE: "true"
+          REHEARSAL_NAME: ${{ needs.prepare.outputs.rehearsal_name }}
+        run: |
+          set -euo pipefail
+          [ -n "$REHEARSAL_NAME" ] || { echo "::error::rehearsal_name is empty"; exit 1; }
+          dotnet "$LAKEBASE_CLI" \
+            lakebase platform branch create "$REHEARSAL_NAME" \
+              --ttl-hours 24 --recreate --no-write-env
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  migrate-rehearsal:
+    needs: [prepare, provision-rehearsal]
+    if: >
+      needs.prepare.outputs.schema_changed == 'true' &&
+      inputs.rehearse_on_cow == true &&
+      needs.provision-rehearsal.result == 'success'
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.database_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    concurrency:
+      group: lakebase-${{ inputs.database_environment }}-rehearse
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Mint short-lived database credential (rehearsal)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          CLIENT_ID: ${{ secrets.LAKEBASE_DATABASE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.LAKEBASE_DATABASE_CLIENT_SECRET }}
+          DB_USERNAME: ${{ secrets.LAKEBASE_DATABASE_USERNAME }}
+          DB_HOST: ${{ needs.provision-rehearsal.outputs.host }}
+          LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+          DB_BRANCH: ${{ needs.provision-rehearsal.outputs.branch_name }}
+          DB_ENDPOINT_ID: ${{ needs.provision-rehearsal.outputs.endpoint_id }}
+        run: |
+          set -euo pipefail
+          [ -n "${DB_HOST:-}" ] || { echo "::error::Rehearsal branch host is empty"; exit 1; }
+          [ -n "${DB_BRANCH:-}" ] || { echo "::error::Rehearsal branch name is empty"; exit 1; }
+          bash .github/scripts/mint-lakebase-credential.sh
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Replay Flyway SQL on rehearsal (does not touch stable)
+        run: |
+          set -euo pipefail
+          dotnet "$LAKEBASE_CLI" lakebase db setup
+          dotnet "$LAKEBASE_CLI" lakebase db migrate
+          dotnet "$LAKEBASE_CLI" lakebase db validate
+          mkdir -p artifacts
+          dotnet "$LAKEBASE_CLI" lakebase db info | tee artifacts/flyway-info-rehearsal.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        continue-on-error: true
+        with:
+          name: flyway-rehearsal-${{ inputs.environment_label }}-${{ needs.prepare.outputs.sha }}
+          path: artifacts/flyway-info-rehearsal.txt
+          retention-days: 90
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  delete-rehearsal:
+    needs: [prepare, provision-rehearsal, migrate-rehearsal]
+    if: always() && needs.migrate-rehearsal.result == 'success'
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.platform_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    concurrency:
+      group: lakebase-${{ inputs.platform_environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Delete successful rehearsal branch
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          LAKEBASE_PLATFORM_CLIENT_ID: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_ID }}
+          LAKEBASE_PLATFORM_CLIENT_SECRET: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_SECRET }}
+          LAKEBASE_PROJECT_ID: ${{ secrets.LAKEBASE_PROJECT_ID }}
+          LAKEBASE_MAIN_BRANCH_ID: ${{ secrets.LAKEBASE_PARENT_BRANCH_ID }}
+          LAKEBASE_APP_SP_ID: ${{ secrets.LAKEBASE_APP_SP_ID }}
+          LAKEBASE_ALLOW_BRANCH_DELETE: "true"
+          REHEARSAL_NAME: ${{ needs.prepare.outputs.rehearsal_name }}
+        run: |
+          set -euo pipefail
+          dotnet "$LAKEBASE_CLI" \
+            lakebase platform branch delete "$REHEARSAL_NAME" --ignore-missing
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  elevate-stable:
+    needs: [prepare, snapshot-stable, migrate-rehearsal]
+    if: >
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.schema_changed == 'true' &&
+      needs.snapshot-stable.result == 'success' &&
+      (needs.migrate-rehearsal.result == 'success' ||
+        (inputs.rehearse_on_cow != true && needs.migrate-rehearsal.result == 'skipped'))
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.platform_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    concurrency:
+      group: lakebase-${{ inputs.platform_environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Least-privilege write membership on stable for migrate
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          LAKEBASE_PLATFORM_CLIENT_ID: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_ID }}
+          LAKEBASE_PLATFORM_CLIENT_SECRET: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_SECRET }}
+          LAKEBASE_PROJECT_ID: ${{ secrets.LAKEBASE_PROJECT_ID }}
+          LAKEBASE_MAIN_BRANCH_ID: ${{ secrets.LAKEBASE_PARENT_BRANCH_ID }}
+          LAKEBASE_APP_SP_ID: ${{ secrets.LAKEBASE_APP_SP_ID }}
+        run: |
+          parent="${LAKEBASE_MAIN_BRANCH_ID:-production}"
+          dotnet "$LAKEBASE_CLI" \
+            lakebase platform role provision "$parent" --write
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  migrate-stable:
+    needs: [prepare, elevate-stable]
+    # always() so skipped rehearsal ancestors (rehearse_on_cow=false) don't skip this job.
+    if: always() && needs.elevate-stable.result == 'success'
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.database_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    concurrency:
+      group: lakebase-${{ inputs.database_environment }}-stable
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Mint short-lived database credential (stable)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          CLIENT_ID: ${{ secrets.LAKEBASE_DATABASE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.LAKEBASE_DATABASE_CLIENT_SECRET }}
+          DB_USERNAME: ${{ secrets.LAKEBASE_DATABASE_USERNAME }}
+          DB_HOST: ${{ secrets.LAKEBASE_PROD_ENDPOINT }}
+          LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+          DB_BRANCH: ${{ vars.LAKEBASE_PARENT_BRANCH_ID }}
+          DB_ENDPOINT_ID: ${{ vars.LAKEBASE_STABLE_ENDPOINT_ID }}
+        run: |
+          set -euo pipefail
+          export DB_BRANCH="${DB_BRANCH:-production}"
+          bash .github/scripts/mint-lakebase-credential.sh
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Replay Flyway SQL on stable
+        run: |
+          set -euo pipefail
+          dotnet "$LAKEBASE_CLI" lakebase db setup
+          dotnet "$LAKEBASE_CLI" lakebase db migrate
+          dotnet "$LAKEBASE_CLI" lakebase db validate
+          mkdir -p artifacts
+          dotnet "$LAKEBASE_CLI" lakebase db info | tee artifacts/flyway-info-stable.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        continue-on-error: true
+        with:
+          name: flyway-stable-${{ inputs.environment_label }}-${{ needs.prepare.outputs.sha }}
+          path: artifacts/flyway-info-stable.txt
+          retention-days: 90
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  restore-stable-readonly:
+    needs: [prepare, elevate-stable, migrate-stable]
+    if: always() && needs.elevate-stable.result == 'success'
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    environment: ${{ inputs.platform_environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    concurrency:
+      group: lakebase-${{ inputs.platform_environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Set up .NET and build trusted Lakebase CLI
+        uses: ./.github/actions/setup-dotnet-isolated
+        with:
+          build-cli: "true"
+      - name: Restore empty membership (read-only) on stable
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          LAKEBASE_PLATFORM_CLIENT_ID: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_ID }}
+          LAKEBASE_PLATFORM_CLIENT_SECRET: ${{ secrets.LAKEBASE_PLATFORM_CLIENT_SECRET }}
+          LAKEBASE_PROJECT_ID: ${{ secrets.LAKEBASE_PROJECT_ID }}
+          LAKEBASE_MAIN_BRANCH_ID: ${{ secrets.LAKEBASE_PARENT_BRANCH_ID }}
+          LAKEBASE_APP_SP_ID: ${{ secrets.LAKEBASE_APP_SP_ID }}
+        run: |
+          parent="${LAKEBASE_MAIN_BRANCH_ID:-production}"
+          dotnet "$LAKEBASE_CLI" \
+            lakebase platform role provision "$parent" --read-only
+      - name: Stop MSBuild servers
+        if: always()
+        run: dotnet build-server shutdown || true
+
+  audit:
+    needs:
+      - prepare
+      - snapshot-stable
+      - provision-rehearsal
+      - migrate-rehearsal
+      - delete-rehearsal
+      - elevate-stable
+      - migrate-stable
+      - restore-stable-readonly
+    if: always()
+    runs-on: ${{ vars.LAKEBASE_TRUSTED_RUNNER || 'self-hosted' }}
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: Promotion audit (no secrets)
+        env:
+          LABEL: ${{ inputs.environment_label }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          SNAPSHOT: ${{ needs.prepare.outputs.snapshot_name }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal_name }}
+          ACTOR: ${{ github.actor }}
+          PR: ${{ needs.prepare.outputs.pr_number }}
+          SCHEMA: ${{ needs.prepare.outputs.schema_changed }}
+          RESULT_REHEARSE: ${{ needs.migrate-rehearsal.result }}
+          RESULT_STABLE: ${{ needs.migrate-stable.result }}
+          RESULT_RESTORE: ${{ needs.restore-stable-readonly.result }}
+        run: |
+          {
+            echo "## ${LABEL} promotion"
+            echo "- immutable SHA: \`$SHA\`"
+            echo "- actor: $ACTOR"
+            echo "- merged PR: ${PR:-none}"
+            echo "- flyway schema changed: ${SCHEMA:-unknown}"
+            echo "- snapshot: $SNAPSHOT"
+            echo "- rehearsal branch: $REHEARSAL"
+            echo "- migrate rehearsal: $RESULT_REHEARSE"
+            echo "- migrate stable: $RESULT_STABLE"
+            echo "- restore read-only: $RESULT_RESTORE"
+            echo "- snapshot is recovery evidence, not automatic rollback"
+            echo "- rehearsal COW is migrated before stable; deleted only after rehearsal succeeds"
+          } >> "$GITHUB_STEP_SUMMARY"
