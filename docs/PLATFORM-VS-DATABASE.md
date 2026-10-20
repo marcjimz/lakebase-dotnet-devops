@@ -32,6 +32,7 @@ Two independent flows. Locally both read the shared `.env` and authenticate as y
 | `lakebase db validate` | Live Flyway checksum/history validation |
 | `lakebase db info` | Flyway history vs Git SQL |
 | `lakebase db grant-ddl --to <app-sp>` | Make the app SP owner of application tables (feature-branch DDL) |
+| `lakebase db seed [file]` | Run an idempotent SQL data script (default `lab/seed/seed.sql`); not recorded by Flyway |
 | `lakebase db flyway -- …` | Pass-through (baseline, repair, …) |
 | `SampleApp` | API against the branch in `.env` (or an explicit `DATABASE_URL`) |
 

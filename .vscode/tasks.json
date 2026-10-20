@@ -9,6 +9,12 @@
       "problemMatcher": []
     },
     {
+      "label": "Lab: seed sample data",
+      "type": "shell",
+      "command": "dotnet run --project src/Lakebase.Cli -- lakebase db seed",
+      "problemMatcher": []
+    },
+    {
       "label": "Lab: migrate (lakebase db migrate)",
       "type": "shell",
       "command": "dotnet run --project src/Lakebase.Cli -- lakebase db migrate",

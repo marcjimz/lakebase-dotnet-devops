@@ -10,6 +10,7 @@ Promotion follows Git `develop` → `staging` → `main`. Each stage selects its
 |------|------|
 | `db/migrations` | Flyway versioned SQL (schema source of truth) |
 | `lab/migrations` | Staged lab migrations (V2, V3); drag into `db/migrations` during the [lab](docs/LAB.md) |
+| `lab/seed` | Lab sample data (`lakebase db seed`), not a migration |
 | `conf/flyway.conf` | Non-secret Flyway settings |
 | `src/SampleApp` | Sample API + EF Core models/DbContext (runtime ORM only) |
 | `src/SampleApp.Tests` | Unit tests + integration tests (`Category=Integration`) |

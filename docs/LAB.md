@@ -10,6 +10,7 @@ Time: about 45 minutes.
 |-------|------|
 | `db/migrations/` | Live Flyway ledger. Starts with `V1__initial_create.sql` only. |
 | `lab/migrations/` | Staged lab steps (`V2`, `V3`). Flyway ignores this folder until you copy a file into `db/migrations/`. |
+| `lab/seed/seed.sql` | ~10k rows of sample members, providers, and care events for the V1 schema. Idempotent; not a migration. |
 | `src/SampleApp` | API. Its EF models already expect `Members.Email`, `Providers.Email`, and `Providers.Notes`. |
 | Lakebase SCM extension | Creates the Lakebase branch when you switch git branches and writes its connection to `.env`. |
 | `scripts/flyway-migrate.sh` | What the extension's **Run Migrations** button runs; it calls `lakebase db migrate` (pinned Flyway 11.20.3). |
@@ -17,9 +18,9 @@ Time: about 45 minutes.
 
 | Database at | `GET /api/members` | `GET /api/providers` | `GET /api/careevents/member/{id}` |
 |-------------|--------------------|----------------------|-----------------------------------|
-| V1 | 500 `column m.Email does not exist` | 500 `column p.Email does not exist` | 200 |
-| V1 + V2 | 200 | 500 | 200 |
-| V1 + V2 + V3 | 200 | 200 | 200 |
+| V1 (seeded) | 500 `column m.Email does not exist` | 500 `column p.Email does not exist` | 200, seeded events |
+| V1 + V2 | 200, 4,005 members (`email` null) | 500 | 200 |
+| V1 + V2 + V3 | 200 | 200, 1,003 providers; `notes` holds the old `CommentsText` | 200 |
 
 ## Facilitator setup (once per workshop)
 
@@ -53,14 +54,23 @@ code .
 
 **Expect:** the Lakebase SCM view lists the project and its `production` branch.
 
-## 2. Look at the broken baseline
+## 2. Load sample data and look at the broken baseline
 
-On `main`, the extension points `.env` at `production`. Run the API (**Terminal → Run Task → Lab: run SampleApp (Swagger)**) and open http://localhost:5000/swagger.
+On `main`, the extension points `.env` at `production`. Load the sample data there (**Terminal → Run Task → Lab: seed sample data**):
 
+```bash
+dotnet run --project src/Lakebase.Cli -- lakebase db seed
+```
+
+**Expect:** `Inserted 10012 row(s)` (4,005 members, 1,003 providers, 5,004 care events) in a few seconds the first time, `Inserted 0 row(s)` on any re-run (it skips rows that exist).
+
+Run the API (**Lab: run SampleApp (Swagger)**) and open http://localhost:5000/swagger.
+
+- `GET /api/careevents/member/1` → **200** with Jane Doe's seeded events
 - `GET /api/members` → **500**, `column m.Email does not exist`
 - `GET /api/providers` → **500**, `column p.Email does not exist`
 
-The C# models are ahead of the schema. Stop the app.
+The data is there, but the C# models are ahead of the schema. Stop the app.
 
 ## 3. Branch the code and the database
 
@@ -68,7 +78,9 @@ The C# models are ahead of the schema. Stop the app.
 git checkout -b feature/member-email
 ```
 
-**Expect:** a notification `Lakebase branch "feature-member-email" created and connected.` `.env` now has `LAKEBASE_BRANCH_ID=feature-member-email`, a new `LAKEBASE_HOST`, and `DB_USERNAME` (your email). This branch is a copy of `production`: same schema, same data.
+A terminal checkout is enough: the extension watches `.git/HEAD` (and polls every 5 seconds), so it reacts to the terminal, the Source Control UI, or its own **Create Branch** command alike. VS Code must be open on the repo.
+
+**Expect:** a notification `Lakebase branch "feature-member-email" created and connected.` `.env` now has `LAKEBASE_BRANCH_ID=feature-member-email`, a new `LAKEBASE_HOST`, and `DB_USERNAME` (your email). This branch is a copy-on-write copy of `production`: same schema and the same ~10k seeded rows, created in seconds without copying the data.
 
 ## 4. Stage V2 and migrate the branch
 
@@ -77,7 +89,7 @@ Drag `lab/migrations/V2__add_member_email.sql` into `db/migrations/` (or `cp lab
 Click **Run Migrations** in the Lakebase SCM view, or run the **Lab: migrate** task. Flyway prints `Successfully applied 1 migration ... now at version v2`.
 
 **Expect:**
-- `GET /api/members` → 200; `POST /api/members` with an `email` round-trips.
+- `GET /api/members` → 200 with the 4,005 seeded members (`email` null); `POST /api/members` with an `email` round-trips.
 - `GET /api/providers` → still 500.
 - The extension's schema diff for the branch shows `Members.Email` added versus `production`.
 - `production` is unchanged: `git checkout main`, run the app, and members is still 500.
@@ -86,7 +98,7 @@ Click **Run Migrations** in the Lakebase SCM view, or run the **Lab: migrate** t
 
 Back on `feature/member-email` (or a new branch), copy `lab/migrations/V3__provider_email_and_notes.sql` into `db/migrations/` and run migrations again.
 
-**Expect:** `GET /api/providers` → 200, and **Lab: integration tests** pass (8 tests).
+**Expect:** `GET /api/providers` → 200 with the 1,003 seeded providers; each `notes` value is the old `CommentsText`, carried through the rename (e.g. `GET /api/providers/1` → Dr. Ada Lovelace, "Accepting new patients"). **Lab: integration tests** pass (8 tests).
 
 ## 6. Commit it
 

@@ -346,6 +346,29 @@ dbGrantDdl.SetAction(async parseResult =>
     });
 });
 
+var dbSeed = new Command("seed", "Run an idempotent SQL data script on the current branch (not a migration)");
+var seedFileArg = new Argument<string>("file")
+{
+    Description = "SQL file, relative to the repo root",
+    DefaultValueFactory = _ => "lab/seed/seed.sql",
+};
+dbSeed.Arguments.Add(seedFileArg);
+dbSeed.Options.Add(jsonOpt);
+dbSeed.SetAction(async parseResult =>
+{
+    var json = parseResult.GetValue(jsonOpt);
+    var file = parseResult.GetValue(seedFileArg)!;
+    await RunJsonOpAsync("db.seed", json, async () =>
+    {
+        var settings = DatabaseConnectionSettings.Load();
+        var path = Path.IsPathRooted(file) ? file : Path.Combine(EnvConfig.FindRepoRoot() ?? ".", file);
+        CliLog.Progress($"==> Seeding {settings.Endpoint ?? "DATABASE_URL"} from {file}");
+        var rows = await SqlScriptRunner.RunFileAsync(settings, path);
+        CliLog.Progress($"==> Inserted {rows} row(s) (existing rows are left alone)");
+        return new { file, rowsInserted = rows };
+    });
+});
+
 var dbFlyway = new Command("flyway", "Pass remaining arguments to the pinned Flyway CLI");
 var flywayArgsArg = new Argument<string[]>("args")
 {
@@ -378,6 +401,7 @@ dbCommand.Subcommands.Add(dbMigrate);
 dbCommand.Subcommands.Add(dbValidate);
 dbCommand.Subcommands.Add(dbInfo);
 dbCommand.Subcommands.Add(dbGrantDdl);
+dbCommand.Subcommands.Add(dbSeed);
 dbCommand.Subcommands.Add(dbFlyway);
 
 var lakebaseCommand = new Command("lakebase", "Lakebase CLI");
