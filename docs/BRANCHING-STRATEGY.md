@@ -55,7 +55,7 @@ Names are sanitized to lowercase `[a-z0-9-]`, length 3–63. GitHub refs `main`,
 
 ## Commands (local / one project)
 
-Run from the repo root. Local CLI still uses `.env.platform` / `.env.database` for **one** project at a time.
+Run from the repo root. Local CLI uses the shared `.env` for **one** project at a time.
 
 ### Feature branch (Dev)
 

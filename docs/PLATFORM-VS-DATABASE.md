@@ -1,11 +1,11 @@
 # Platform vs Database Flows
 
-Two independent flows, configs, and credentials.
+Two independent flows. Locally both read the shared `.env` and authenticate as you (Databricks CLI login, or a PAT). In CI each flow uses its own service principal from its own GitHub environment.
 
 ## Platform (control plane)
 
-**Config:** `.env.platform`  
-**Credentials:** `LAKEBASE_PLATFORM_CLIENT_ID` / `LAKEBASE_PLATFORM_CLIENT_SECRET`  
+**Config:** `.env` (legacy `.env.platform` still loads)  
+**Credentials:** local: your CLI login; CI: `LAKEBASE_PLATFORM_CLIENT_ID` / `LAKEBASE_PLATFORM_CLIENT_SECRET`  
 **Not for:** Postgres connections, SampleApp runtime, Flyway
 
 | Command | Purpose |
@@ -19,8 +19,8 @@ Two independent flows, configs, and credentials.
 
 ## Database (data plane)
 
-**Config:** `.env.database`  
-**Credentials:** `LAKEBASE_DATABASE_CLIENT_ID` / `LAKEBASE_DATABASE_CLIENT_SECRET`  
+**Config:** `.env` (legacy `.env.database` still loads)  
+**Credentials:** local: your CLI login; CI: `LAKEBASE_DATABASE_CLIENT_ID` / `LAKEBASE_DATABASE_CLIENT_SECRET`  
 **Not for:** Branch create/delete, role APIs
 
 | Command / tool | Purpose |
@@ -33,15 +33,17 @@ Two independent flows, configs, and credentials.
 | `lakebase db info` | Flyway history vs Git SQL |
 | `lakebase db grant-ddl --to <app-sp>` | Make the app SP owner of application tables (feature-branch DDL) |
 | `lakebase db flyway -- …` | Pass-through (baseline, repair, …) |
-| `SampleApp` | API against `DATABASE_URL` |
+| `SampleApp` | API against the branch in `.env` (or an explicit `DATABASE_URL`) |
 
-Branch create updates `.env.database` (`LAKEBASE_ENDPOINT` + host) unless `--no-write-env`.
+Branch create writes `LAKEBASE_HOST`, `LAKEBASE_BRANCH_ID`, and `LAKEBASE_ENDPOINT` to `.env` (the same keys the Lakebase SCM hook writes) and removes a stale `DATABASE_URL` / `DB_PASSWORD`, unless `--no-write-env`.
+
+`DATABASE_URL` is optional and may be Npgsql keywords, `postgresql://`, or `jdbc:postgresql://`; it is normalized for Npgsql. `LAKEBASE_ENDPOINT` may be a full `projects/…/endpoints/<id>` path or just the endpoint id combined with `LAKEBASE_PROJECT_ID` + `LAKEBASE_BRANCH_ID`.
 
 ## Setup
 
 ```bash
-cp .env.platform.example .env.platform
-cp .env.database.example .env.database
+cp .env.example .env
+databricks auth login --host <workspace-url>
 ```
 
 ## Library layout

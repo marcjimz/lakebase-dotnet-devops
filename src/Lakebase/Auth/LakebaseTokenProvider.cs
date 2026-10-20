@@ -49,7 +49,7 @@ public class LakebaseTokenProvider
     private async Task RefreshAsync(CancellationToken ct)
     {
         if (string.IsNullOrEmpty(_settings.Endpoint))
-            throw new InvalidOperationException("LAKEBASE_ENDPOINT not set in .env.database");
+            throw new InvalidOperationException("LAKEBASE_ENDPOINT (or LAKEBASE_PROJECT_ID + LAKEBASE_BRANCH_ID) not set in .env");
 
         using var result = await _api.PostAsync(
             "/api/2.0/postgres/credentials",

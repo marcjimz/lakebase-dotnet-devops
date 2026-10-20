@@ -1,4 +1,4 @@
--- Add Email on Providers (Members.Email is V2). Rename CommentsText → Notes.
+-- Lab step 2: Providers.Email and rename CommentsText → Notes. Fixes /api/providers.
 
 ALTER TABLE "Providers"
     ADD COLUMN IF NOT EXISTS "Email" text;

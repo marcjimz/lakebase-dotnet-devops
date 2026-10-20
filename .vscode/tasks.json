@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Lab: run SampleApp (Swagger)",
+      "type": "shell",
+      "command": "dotnet run --project src/SampleApp",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Lab: migrate (lakebase db migrate)",
+      "type": "shell",
+      "command": "dotnet run --project src/Lakebase.Cli -- lakebase db migrate",
+      "problemMatcher": []
+    },
+    {
+      "label": "Lab: migration status (lakebase db info)",
+      "type": "shell",
+      "command": "dotnet run --project src/Lakebase.Cli -- lakebase db info",
+      "problemMatcher": []
+    },
+    {
+      "label": "Lab: integration tests",
+      "type": "shell",
+      "command": "dotnet test --filter Category=Integration",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -5,10 +5,11 @@ using System.Text.Json;
 namespace Lakebase;
 
 /// <summary>
-/// Workspace OAuth for Lakebase APIs: static token, service-principal client credentials, or
-/// GitHub Actions OIDC federation (<c>LAKEBASE_AUTH_TYPE=github-oidc</c>, no stored secret).
+/// Workspace OAuth for Lakebase APIs. The mode comes from <see cref="WorkspaceAuthModes.Resolve"/>:
+/// the developer's Databricks CLI login or a PAT locally; service-principal client credentials or
+/// GitHub Actions OIDC federation (<c>LAKEBASE_AUTH_TYPE=github-oidc</c>, no stored secret) in CI.
 /// </summary>
-public sealed class DatabricksWorkspaceAuth(IWorkspaceCredentials settings)
+public sealed class DatabricksWorkspaceAuth(IWorkspaceCredentials settings, IDatabricksCli? cli = null)
 {
     private static readonly TimeSpan RefreshSkew = TimeSpan.FromMinutes(5);
 
@@ -16,14 +17,12 @@ public sealed class DatabricksWorkspaceAuth(IWorkspaceCredentials settings)
     private DateTime _tokenExpiry = DateTime.MinValue;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
+    public WorkspaceAuthMode Mode { get; } = WorkspaceAuthModes.Resolve(settings);
+
     public async Task<string> GetAccessTokenAsync(CancellationToken ct = default)
     {
-        if (!string.IsNullOrEmpty(settings.DatabricksToken))
-            return settings.DatabricksToken;
-
-        if (!GitHubOidc.CanMint(settings))
-            throw new InvalidOperationException(
-                "Set DATABRICKS_TOKEN, workspace client ID/secret, or client ID with LAKEBASE_AUTH_TYPE=github-oidc in the active env file (.env.platform or .env.database)");
+        if (Mode == WorkspaceAuthMode.Pat)
+            return settings.DatabricksToken!;
 
         await _lock.WaitAsync(ct);
         try
@@ -31,7 +30,14 @@ public sealed class DatabricksWorkspaceAuth(IWorkspaceCredentials settings)
             if (_cachedToken is not null && DateTime.UtcNow < _tokenExpiry - RefreshSkew)
                 return _cachedToken;
 
-            var useOidc = string.IsNullOrEmpty(settings.ClientSecret) && GitHubOidc.IsEnabled();
+            if (Mode == WorkspaceAuthMode.DatabricksCli)
+            {
+                (_cachedToken, _tokenExpiry) = await DatabricksCli.GetAccessTokenAsync(
+                    cli ?? DatabricksCli.Default, settings.ConfigProfile, settings.DatabricksHost, ct);
+                return _cachedToken;
+            }
+
+            var useOidc = Mode == WorkspaceAuthMode.GitHubOidc;
             var form = useOidc
                 ? await GitHubOidc.TokenExchangeFormAsync(settings, ct)
                 : new Dictionary<string, string> { ["grant_type"] = "client_credentials" };

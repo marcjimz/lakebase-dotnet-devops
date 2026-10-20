@@ -2,7 +2,7 @@ namespace Lakebase;
 
 /// <summary>
 /// Lakebase control-plane settings (branch create/delete, role assignment, promote).
-/// Loaded from .env.platform — never used for Postgres connections.
+/// Loaded from .env (legacy: .env.platform); never used for Postgres connections.
 /// </summary>
 public sealed class PlatformSettings : IWorkspaceCredentials
 {
@@ -10,6 +10,7 @@ public sealed class PlatformSettings : IWorkspaceCredentials
     public string? DatabricksToken { get; init; }
     public string? ClientId { get; init; }
     public string? ClientSecret { get; init; }
+    public string? ConfigProfile { get; init; }
     public required string ProjectId { get; init; }
     public required string MainBranchId { get; init; }
     public string? DevGroup { get; init; }
@@ -28,12 +29,13 @@ public sealed class PlatformSettings : IWorkspaceCredentials
     {
         EnvConfig.LoadPlatform();
 
-        var host = Environment.GetEnvironmentVariable("DATABRICKS_HOST")
-            ?? throw new InvalidOperationException("DATABRICKS_HOST not set in .env.platform");
-        var projectId = Environment.GetEnvironmentVariable("LAKEBASE_PROJECT_ID")
-            ?? throw new InvalidOperationException("LAKEBASE_PROJECT_ID not set in .env.platform");
-        var mainBranchId = Environment.GetEnvironmentVariable("LAKEBASE_MAIN_BRANCH_ID")
-            ?? throw new InvalidOperationException("LAKEBASE_MAIN_BRANCH_ID not set in .env.platform");
+        var profile = EnvConfig.Get("DATABRICKS_CONFIG_PROFILE");
+        var host = EnvConfig.WorkspaceHost(profile)
+            ?? throw new InvalidOperationException(
+                "Set DATABRICKS_CONFIG_PROFILE (a 'databricks auth login' profile) or DATABRICKS_HOST in .env");
+        var projectId = EnvConfig.Get("LAKEBASE_PROJECT_ID")
+            ?? throw new InvalidOperationException("LAKEBASE_PROJECT_ID not set in .env");
+        var mainBranchId = EnvConfig.Get("LAKEBASE_MAIN_BRANCH_ID") ?? "production";
 
         var clientId = Environment.GetEnvironmentVariable("LAKEBASE_PLATFORM_CLIENT_ID")
             ?? Environment.GetEnvironmentVariable("DATABRICKS_CLIENT_ID");
@@ -42,10 +44,11 @@ public sealed class PlatformSettings : IWorkspaceCredentials
 
         return new PlatformSettings
         {
-            DatabricksHost = host.TrimEnd('/'),
-            DatabricksToken = Environment.GetEnvironmentVariable("DATABRICKS_TOKEN"),
+            DatabricksHost = host,
+            DatabricksToken = EnvConfig.Get("DATABRICKS_TOKEN"),
             ClientId = clientId,
             ClientSecret = clientSecret,
+            ConfigProfile = profile,
             ProjectId = projectId,
             MainBranchId = mainBranchId,
             DevGroup = Environment.GetEnvironmentVariable("LAKEBASE_DEV_GROUP"),

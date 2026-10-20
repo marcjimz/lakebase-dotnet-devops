@@ -25,7 +25,7 @@ var recreateOpt = new Option<bool>("--recreate")
 };
 var noWriteEnvOpt = new Option<bool>("--no-write-env")
 {
-    Description = "Do not update .env.database",
+    Description = "Do not update .env",
 };
 platformBranchCreate.Arguments.Add(branchNameArg);
 platformBranchCreate.Options.Add(parentOpt);
@@ -228,7 +228,7 @@ platformPromote.SetAction(async parseResult =>
     });
 });
 
-var platformCommand = new Command("platform", "Lakebase control plane (.env.platform)");
+var platformCommand = new Command("platform", "Lakebase control plane (branches, roles, snapshots, promote)");
 platformCommand.Subcommands.Add(platformBranch);
 platformCommand.Subcommands.Add(platformRole);
 platformCommand.Subcommands.Add(platformStaging);
@@ -370,7 +370,7 @@ dbFlyway.SetAction(async parseResult =>
     }, writeResultWhenHuman: false);
 });
 
-var dbCommand = new Command("db", "Branch database connections (.env.database)");
+var dbCommand = new Command("db", "Branch database connections and Flyway migrations");
 dbCommand.Subcommands.Add(dbGenerateToken);
 dbCommand.Subcommands.Add(dbSetup);
 dbCommand.Subcommands.Add(dbLint);

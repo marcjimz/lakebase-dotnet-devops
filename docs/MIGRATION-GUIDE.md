@@ -4,7 +4,7 @@ Flyway versioned SQL in `db/migrations` is the **only** schema ledger. EF Core r
 
 Author SQL on a Git feature branch, prove it on an isolated Dev `pr-N` branch, then promote by replaying the **same** files directly on each environment's stable branch at an immutable Git SHA.
 
-Local feature apply uses `.env.database` with `lakebase db migrate`. Trusted PR schema and promote workflows mint a database password and pass it to the same CLI via `DATABASE_URL` (never logged).
+Local feature apply uses `.env` with `lakebase db migrate`, authenticating as you. Trusted PR schema and promote workflows mint a database password and pass it to the same CLI via `DATABASE_URL` (never logged).
 
 Lakebase has no cross-project or cross-workspace branch merge. Promotion therefore replays the Git migration ledger against whichever Lakebase target each GitHub environment configures.
 
@@ -37,7 +37,7 @@ Update EF models for the ORM, then add the matching Flyway file. SQL is authorit
 
 The trusted PR controller provisions the App SP with write membership and transfers
 application table ownership to that SP on `pr-N` (COW keeps the parent's owner otherwise).
-Use the **same App SP** in `.env.database` (`Username` + `LAKEBASE_DATABASE_CLIENT_ID`).
+Locally you migrate as yourself (`DB_USERNAME` + your CLI login), so your Postgres role needs DDL rights on the branch's tables.
 
 ```bash
 dotnet run --project src/Lakebase.Cli -- lakebase db setup

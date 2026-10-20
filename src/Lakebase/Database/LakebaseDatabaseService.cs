@@ -11,16 +11,13 @@ public sealed class LakebaseDatabaseService(
         CliLog.Progress($"==> Workspace: {settings.DatabricksHost}");
         if (!string.IsNullOrEmpty(settings.Endpoint))
             CliLog.Progress($"==> Endpoint:  {settings.Endpoint}");
-        if (!string.IsNullOrEmpty(settings.ClientId) && !string.IsNullOrEmpty(settings.ClientSecret))
-            CliLog.Progress("==> Auth:      database service principal / app SP");
-        else if (!string.IsNullOrEmpty(settings.DatabricksToken))
-            CliLog.Progress("==> Auth:      database token");
+        CliLog.Progress($"==> Auth:      {WorkspaceAuthModes.Resolve(settings)}");
     }
 
     public async Task<object> GenerateCredentialAsync(CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(settings.Endpoint))
-            throw new InvalidOperationException("Set LAKEBASE_ENDPOINT in .env.database");
+            throw new InvalidOperationException("Set LAKEBASE_ENDPOINT, or LAKEBASE_PROJECT_ID + LAKEBASE_BRANCH_ID, in .env");
 
         PrintTarget();
         CliLog.Progress("==> Generating Lakebase database credential...");
@@ -43,7 +40,7 @@ public sealed class LakebaseDatabaseService(
             var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
             CliLog.Dump(json);
             CliLog.Progress("==> Token expires in ~1 hour.");
-            CliLog.Progress("==> Copy token into DATABASE_URL Password= in .env.database");
+            CliLog.Progress("==> The app and lakebase db commands mint this automatically; use it for psql or other clients.");
         }
 
         return new

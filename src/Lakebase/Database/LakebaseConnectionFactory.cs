@@ -58,8 +58,8 @@ public static class LakebaseConnectionFactory
         return builder.ConnectionString;
     }
 
-    private static bool ShouldRefreshToken(DatabaseConnectionSettings settings)
+    // Any workspace auth mode can mint (CLI login, PAT, SP); WorkspaceAuthModes.Resolve always picks one.
+    public static bool ShouldRefreshToken(DatabaseConnectionSettings settings)
         => settings.UseOAuthTokenRefresh
-            && GitHubOidc.CanMint(settings)
             && !string.IsNullOrEmpty(settings.Endpoint);
 }

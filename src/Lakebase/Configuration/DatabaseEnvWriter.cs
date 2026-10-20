@@ -4,17 +4,22 @@ using System.Text.RegularExpressions;
 namespace Lakebase;
 
 /// <summary>
-/// Updates .env.database after branch create so developers do not hand-edit hosts.
+/// Updates .env after branch create so developers do not hand-edit hosts. Writes the same branch
+/// metadata keys as the Lakebase SCM extension's post-checkout hook, never a password: the app and
+/// Flyway mint a short-lived credential at runtime.
 /// </summary>
 public static partial class DatabaseEnvWriter
 {
+    // Connection keys a stale value of would shadow the new branch metadata.
+    private static readonly string[] StaleKeys = ["DATABASE_URL", "DB_PASSWORD"];
+
     public static string? FindDatabaseEnvPath()
     {
         var root = EnvConfig.FindRepoRoot();
         if (root is null)
             return null;
 
-        return Path.Combine(root, ".env.database");
+        return Path.Combine(root, EnvConfig.SharedEnvFile);
     }
 
     public static void UpdateBranchConnection(
@@ -23,55 +28,44 @@ public static partial class DatabaseEnvWriter
         string? username = null)
     {
         var path = FindDatabaseEnvPath()
-            ?? throw new InvalidOperationException("Could not locate repo root for .env.database");
+            ?? throw new InvalidOperationException("Could not locate repo root for .env");
+        UpdateBranchConnection(path, host, endpointPath, username);
+    }
 
-        username ??= Environment.GetEnvironmentVariable("LAKEBASE_DATABASE_CLIENT_ID")
-            ?? Environment.GetEnvironmentVariable("LAKEBASE_APP_SP_ID")
-            ?? ReadExistingUsername(path)
-            ?? "<app-sp-application-id>";
+    public static void UpdateBranchConnection(
+        string path,
+        string host,
+        string endpointPath,
+        string? username)
+    {
+        var match = EndpointPathPattern().Match(endpointPath);
+        if (!match.Success)
+            throw new InvalidOperationException($"Unexpected endpoint path '{endpointPath}'");
 
-        var connection =
-            $"Host={host};Port=5432;Database=databricks_postgres;Username={username};SSLMode=Require";
+        username ??= EnvConfig.Get("LAKEBASE_DATABASE_CLIENT_ID") ?? EnvConfig.Get("LAKEBASE_APP_SP_ID");
 
         Dictionary<string, string> updates = new(StringComparer.Ordinal)
         {
-            ["LAKEBASE_ENDPOINT"] = endpointPath,
-            ["DATABASE_URL"] = connection,
+            ["LAKEBASE_HOST"] = host,
+            ["LAKEBASE_BRANCH_ID"] = match.Groups["branch"].Value,
+            ["LAKEBASE_ENDPOINT"] = match.Groups["endpoint"].Value,
         };
+        if (!string.IsNullOrEmpty(username))
+            updates["DB_USERNAME"] = username;
 
-        UpsertKeys(path, updates);
+        UpsertKeys(path, updates, StaleKeys);
         CliLog.Progress($"==> Updated {path}");
-        CliLog.Detail($"    LAKEBASE_ENDPOINT={endpointPath}");
-        CliLog.Detail($"    DATABASE_URL=Host={host};...;Username={username};SSLMode=Require");
+        foreach (var (key, value) in updates)
+            CliLog.Detail($"    {key}={value}");
     }
 
-    private static string? ReadExistingUsername(string path)
-    {
-        if (!File.Exists(path))
-            return null;
-
-        foreach (var line in File.ReadAllLines(path))
-        {
-            if (!line.StartsWith("DATABASE_URL=", StringComparison.Ordinal))
-                continue;
-
-            var m = UsernamePattern().Match(line);
-            if (m.Success && m.Groups[1].Value is not ("<role>" or "<app-sp-application-id>"))
-                return m.Groups[1].Value;
-        }
-
-        return null;
-    }
-
-    private static void UpsertKeys(string path, IReadOnlyDictionary<string, string> updates)
+    private static void UpsertKeys(string path, IReadOnlyDictionary<string, string> updates, IReadOnlyCollection<string> remove)
     {
         var lines = File.Exists(path)
             ? File.ReadAllLines(path).ToList()
             : new List<string>
             {
                 "# Auto-updated by lakebase platform branch create",
-                "DATABRICKS_HOST=",
-                "LAKEBASE_USE_OAUTH_TOKEN=true",
             };
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -86,6 +80,12 @@ public static partial class DatabaseEnvWriter
                 continue;
 
             var key = line[..eq];
+            if (remove.Contains(key))
+            {
+                lines.RemoveAt(i--);
+                continue;
+            }
+
             if (!updates.TryGetValue(key, out var value))
                 continue;
 
@@ -106,6 +106,6 @@ public static partial class DatabaseEnvWriter
         File.WriteAllText(path, sb.ToString());
     }
 
-    [GeneratedRegex(@"Username=([^;]+)")]
-    private static partial Regex UsernamePattern();
+    [GeneratedRegex(@"^projects/[^/]+/branches/(?<branch>[^/]+)/endpoints/(?<endpoint>[^/]+)$")]
+    private static partial Regex EndpointPathPattern();
 }

@@ -17,7 +17,7 @@ public sealed class CreateBranchOptions
     /// <summary>If the branch already exists and Recreate is false, reuse it (idempotent).</summary>
     public bool Idempotent { get; init; } = true;
 
-    /// <summary>Write LAKEBASE_ENDPOINT + DATABASE_URL host into .env.database.</summary>
+    /// <summary>Write the branch connection metadata (LAKEBASE_HOST, LAKEBASE_BRANCH_ID, LAKEBASE_ENDPOINT) into .env.</summary>
     public bool WriteEnvDatabase { get; init; } = true;
 
     public bool ProvisionRoles { get; init; } = true;

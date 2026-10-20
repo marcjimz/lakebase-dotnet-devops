@@ -9,6 +9,7 @@ Promotion follows Git `develop` → `staging` → `main`. Each stage selects its
 | Path | Role |
 |------|------|
 | `db/migrations` | Flyway versioned SQL (schema source of truth) |
+| `lab/migrations` | Staged lab migrations (V2, V3); drag into `db/migrations` during the [lab](docs/LAB.md) |
 | `conf/flyway.conf` | Non-secret Flyway settings |
 | `src/SampleApp` | Sample API + EF Core models/DbContext (runtime ORM only) |
 | `src/SampleApp.Tests` | Unit tests + integration tests (`Category=Integration`) |
@@ -18,21 +19,28 @@ Promotion follows Git `develop` → `staging` → `main`. Each stage selects its
 
 ## Config
 
-| File | Used by |
-|------|---------|
-| `.env.platform` | `lakebase platform *` |
-| `.env.database` | SampleApp, `lakebase db *`, `lakebase db generate-token` |
+One `.env` at the repo root is shared by SampleApp, the `lakebase` CLI, and the [Lakebase SCM VS Code extension](docs/LAB.md):
 
 ```bash
-cp .env.platform.example .env.platform
-cp .env.database.example .env.database
+cp .env.example .env   # set LAKEBASE_PROJECT_ID and DATABRICKS_HOST (or DATABRICKS_CONFIG_PROFILE)
+databricks auth login --host <workspace-url>
 ```
 
-See [docs/PLATFORM-VS-DATABASE.md](docs/PLATFORM-VS-DATABASE.md).
+Locally you authenticate as yourself: no PAT, client secret, or database password goes in `.env`. The extension's post-checkout hook (or `lakebase platform branch create`) writes the branch connection metadata (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `LAKEBASE_ENDPOINT`, `DB_USERNAME`), and the app and Flyway mint a short-lived Postgres credential from it.
+
+| `LAKEBASE_AUTH_MODE` | Where | Credentials |
+|----------------------|-------|-------------|
+| `databricks-cli` (local default) | Laptop | `databricks auth login` profile |
+| `pat` | Laptop without the CLI | `DATABRICKS_TOKEN` |
+| `client-credentials` | CI | Service principal client id + secret from GitHub environments |
+| `github-oidc` | CI | Service principal client id + GitHub OIDC (`LAKEBASE_AUTH_TYPE=github-oidc`) |
+
+When unset, the mode is inferred: `DATABRICKS_TOKEN` → `pat`, client id + secret → `client-credentials`, client id + `LAKEBASE_AUTH_TYPE=github-oidc` → `github-oidc`, otherwise `databricks-cli`. Legacy `.env.platform` / `.env.database` files still load as fallbacks. See [docs/PLATFORM-VS-DATABASE.md](docs/PLATFORM-VS-DATABASE.md).
 
 ## Prerequisites
 
 - .NET 10 SDK
+- Databricks CLI, signed in with `databricks auth login`
 - Flyway CLI 11.20.3 (`dotnet run --project src/Lakebase.Cli -- lakebase db setup` — pinned, checksum-verified)
 - A Lakebase project in your Databricks workspace
 
@@ -45,8 +53,6 @@ dotnet run --project src/Lakebase.Cli -- lakebase db setup
 
 dotnet run --project src/Lakebase.Cli -- \
   lakebase platform branch create feature-my-change --ttl-hours 168
-
-dotnet run --project src/Lakebase.Cli -- lakebase db generate-token
 
 dotnet run --project src/Lakebase.Cli -- lakebase db migrate
 dotnet run --project src/Lakebase.Cli -- lakebase db validate
@@ -69,6 +75,8 @@ Lakebase has no merge. Schema reaches each environment by replaying Git Flyway S
 7. Merge to `main` — snapshot Production stable, migrate a COW rehearsal branch, then replay Flyway on Production stable
 
 Details: [docs/BRANCHING-STRATEGY.md](docs/BRANCHING-STRATEGY.md), [docs/MIGRATION-GUIDE.md](docs/MIGRATION-GUIDE.md), [docs/GITHUB-RULESETS.md](docs/GITHUB-RULESETS.md).
+
+**This repo's `db/migrations` starts at V1 for the lab; V2 and V3 live in `lab/migrations`.** Point a fork's CI at fresh Lakebase projects: a database that already applied V2/V3 fails `flyway validate` until they are back in `db/migrations`.
 
 **Adopting Flyway on a database that already has EF Core schema/`__EFMigrationsHistory` requires a one-time Flyway `baseline`. Do not `flyway migrate` V1 onto an already-populated EF database.** Current Dev/Staging/Prod stables were empty of app schema, so V1 can initialize fresh stables.
 

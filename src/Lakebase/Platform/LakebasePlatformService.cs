@@ -40,7 +40,7 @@ public sealed class LakebasePlatformService(
         }, ct);
 
     /// <summary>
-    /// Create (or reuse) a copy-on-write branch. Supports parent override, TTL, recreate, and .env.database write.
+    /// Create (or reuse) a copy-on-write branch. Supports parent override, TTL, recreate, and .env write.
     /// </summary>
     public async Task<CreateBranchResult> CreateBranchAsync(
         string branchName,
@@ -129,7 +129,7 @@ public sealed class LakebasePlatformService(
 
         if (!settings.AllowBranchDelete)
             throw new InvalidOperationException(
-                "Branch delete is disabled. Set LAKEBASE_ALLOW_BRANCH_DELETE=true in .env.platform to enable.");
+                "Branch delete is disabled. Set LAKEBASE_ALLOW_BRANCH_DELETE=true in .env to enable.");
 
         if (ignoreMissing && !await BranchExistsAsync(sanitized, ct))
         {
@@ -328,7 +328,7 @@ public sealed class LakebasePlatformService(
     {
         if (string.IsNullOrEmpty(settings.ProductionDatabaseUrl))
             throw new InvalidOperationException(
-                "Set PRODUCTION_DATABASE_URL in .env.platform for promote (migration replay on production).");
+                "Set PRODUCTION_DATABASE_URL in .env for promote (migration replay on production).");
 
         PrintTarget();
         var staging = BranchName.Sanitize(stagingName ?? settings.StagingBranchId);
@@ -563,7 +563,7 @@ public sealed class LakebasePlatformService(
 
     private DatabaseConnectionSettings BuildProductionDatabaseSettings()
     {
-        // Reuse app SP credentials from the environment / .env.database for OAuth refresh.
+        // Reuse app SP credentials from the environment / .env for OAuth refresh.
         EnvConfig.LoadDatabase();
         var clientId = Environment.GetEnvironmentVariable("LAKEBASE_DATABASE_CLIENT_ID")
             ?? Environment.GetEnvironmentVariable("DATABRICKS_CLIENT_ID")
@@ -578,7 +578,7 @@ public sealed class LakebasePlatformService(
             ClientSecret = clientSecret,
             ConnectionString = settings.ProductionDatabaseUrl!,
             Endpoint = settings.ProductionEndpoint
-                ?? throw new InvalidOperationException("Set PRODUCTION_LAKEBASE_ENDPOINT in .env.platform"),
+                ?? throw new InvalidOperationException("Set PRODUCTION_LAKEBASE_ENDPOINT in .env"),
             UseOAuthTokenRefresh = !string.IsNullOrEmpty(clientId) && (!string.IsNullOrEmpty(clientSecret) || GitHubOidc.IsEnabled()),
         };
     }
@@ -665,17 +665,17 @@ public sealed class LakebasePlatformService(
     private void WriteDatabaseConfigInstructions(string branchName, string host, string? endpointPath)
     {
         CliLog.Blank();
-        CliLog.Progress("==> Update .env.database with:");
+        CliLog.Progress("==> Update .env with:");
+        CliLog.Progress($"LAKEBASE_HOST={host}");
+        CliLog.Progress($"LAKEBASE_BRANCH_ID={branchName}");
         CliLog.Progress($"LAKEBASE_ENDPOINT={endpointPath}");
-        CliLog.Progress(
-            $"DATABASE_URL=Host={host};Port=5432;Database={settings.DatabaseName};Username={settings.AppServicePrincipalId ?? "<app-sp-application-id>"};SSLMode=Require");
-        CliLog.Progress("    (App SP application id as Username; omit Password when LAKEBASE_USE_OAUTH_TOKEN=true)");
+        CliLog.Progress("    (No password: the app and lakebase db commands mint a short-lived credential.)");
         CliLog.Blank();
         CliLog.Progress("==> Then use the database flow (not platform credentials):");
         CliLog.Detail("    dotnet run --project src/Lakebase.Cli -- lakebase db generate-token");
         CliLog.Detail("    dotnet run --project src/Lakebase.Cli -- lakebase db migrate");
         CliLog.Detail("    dotnet run --project src/Lakebase.Cli -- lakebase db validate");
-        CliLog.Progress("==> Platform credentials stay in .env.platform only.");
+        CliLog.Progress("==> CI service-principal credentials belong in GitHub environments, not .env.");
     }
 
     private bool IsProtectedBranch(string branchName)

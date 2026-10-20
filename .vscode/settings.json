@@ -1,0 +1,10 @@
+{
+  "lakebaseSync.language": "dotnet",
+  "lakebaseSync.migrationPath": "db/migrations",
+  "lakebaseSync.autoCreateBranch": true,
+  "lakebaseSync.productionReadOnly": true,
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  }
+}

@@ -11,14 +11,20 @@ public static class FlywayJdbc
 {
     public static (string JdbcUrl, string User, string Password) FromDatabaseUrl(string databaseUrl)
     {
+        var parts = Parse(databaseUrl);
+        return (ToJdbc(parts.Host, parts.Port, parts.Database, parts.SslMode), parts.User, parts.Password);
+    }
+
+    /// <summary>Parses any supported DATABASE_URL form. <see cref="PostgresConnectionParts.SslMode"/> uses libpq/JDBC names.</summary>
+    public static PostgresConnectionParts Parse(string databaseUrl)
+    {
         var raw = databaseUrl.Trim();
         if (raw.Length == 0)
             throw new InvalidOperationException("DATABASE_URL is empty");
 
         if (raw.StartsWith("jdbc:postgresql:", StringComparison.OrdinalIgnoreCase))
             return FromJdbc(raw);
-        if (raw.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
-            || raw.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+        if (IsPostgresUri(raw))
             return FromPostgresUri(raw);
         if (raw.Contains(';') || Regex.IsMatch(raw, @"(?i)\bhost\s*="))
             return FromNpgsql(raw);
@@ -27,7 +33,11 @@ public static class FlywayJdbc
             "DATABASE_URL must be Npgsql semicolon format, postgres URI, or jdbc:postgresql");
     }
 
-    private static (string JdbcUrl, string User, string Password) FromNpgsql(string url)
+    public static bool IsPostgresUri(string databaseUrl)
+        => databaseUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
+            || databaseUrl.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase);
+
+    private static PostgresConnectionParts FromNpgsql(string url)
     {
         var builder = new NpgsqlConnectionStringBuilder(url);
         var host = builder.Host ?? "";
@@ -38,25 +48,25 @@ public static class FlywayJdbc
         var sslmode = Regex.IsMatch(url, @"(?i)ssl\s*mode|sslmode")
             ? ToJdbcSslMode(builder.SslMode.ToString())
             : "require";
-        return (ToJdbc(host, port, database, sslmode), user, password);
+        return new PostgresConnectionParts(host, port, database, user, password, sslmode);
     }
 
-    private static (string JdbcUrl, string User, string Password) FromPostgresUri(string url)
+    private static PostgresConnectionParts FromPostgresUri(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed))
             throw new InvalidOperationException("DATABASE_URL is not a valid postgres URI");
-        return FromParsedUri(parsed, stripJdbcPrefix: false);
+        return FromParsedUri(parsed);
     }
 
-    private static (string JdbcUrl, string User, string Password) FromJdbc(string url)
+    private static PostgresConnectionParts FromJdbc(string url)
     {
         var asUri = url.Replace("jdbc:postgresql://", "postgresql://", StringComparison.OrdinalIgnoreCase);
         if (!Uri.TryCreate(asUri, UriKind.Absolute, out var parsed))
             throw new InvalidOperationException("DATABASE_URL is not a valid jdbc:postgresql URL");
-        return FromParsedUri(parsed, stripJdbcPrefix: true);
+        return FromParsedUri(parsed);
     }
 
-    private static (string JdbcUrl, string User, string Password) FromParsedUri(Uri parsed, bool stripJdbcPrefix)
+    private static PostgresConnectionParts FromParsedUri(Uri parsed)
     {
         var query = ParseQuery(parsed.Query);
         var user = Uri.UnescapeDataString(parsed.UserInfo.Split(':')[0]);
@@ -71,8 +81,7 @@ public static class FlywayJdbc
         var host = parsed.Host;
         var port = parsed.Port > 0 ? parsed.Port : 5432;
         var database = Uri.UnescapeDataString(parsed.AbsolutePath.Trim('/'));
-        _ = stripJdbcPrefix;
-        return (ToJdbc(host, port, database, sslmode), user, password);
+        return new PostgresConnectionParts(host, port, database, user, password, sslmode);
     }
 
     public static string ToJdbc(string host, int port, string database, string sslmode)
@@ -118,3 +127,12 @@ public static class FlywayJdbc
         return result;
     }
 }
+
+/// <summary>Components of a Postgres connection; <see cref="SslMode"/> uses libpq/JDBC names (e.g. <c>verify-full</c>).</summary>
+public sealed record PostgresConnectionParts(
+    string Host,
+    int Port,
+    string Database,
+    string User,
+    string Password,
+    string SslMode);
