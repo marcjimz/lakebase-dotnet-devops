@@ -15,6 +15,12 @@
       "problemMatcher": []
     },
     {
+      "label": "Lab: apply branch data changes",
+      "type": "shell",
+      "command": "dotnet run --project src/Lakebase.Cli -- lakebase db seed lab/data/branch-changes.sql",
+      "problemMatcher": []
+    },
+    {
       "label": "Lab: migrate (lakebase db migrate)",
       "type": "shell",
       "command": "dotnet run --project src/Lakebase.Cli -- lakebase db migrate",

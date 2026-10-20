@@ -11,6 +11,7 @@ Time: about 45 minutes.
 | `db/migrations/` | Live Flyway ledger. Starts with `V1__initial_create.sql` only. |
 | `lab/migrations/` | Staged lab steps (`V2`, `V3`). Flyway ignores this folder until you copy a file into `db/migrations/`. |
 | `lab/seed/seed.sql` | ~10k rows of sample members, providers, and care events for the V1 schema. Idempotent; not a migration. |
+| `lab/data/branch-changes.sql` | Branch-only data changes (step 6) to compare a feature branch with `production`. |
 | `src/SampleApp` | API. Its EF models already expect `Members.Email`, `Providers.Email`, and `Providers.Notes`. |
 | Lakebase SCM extension | Creates the Lakebase branch when you switch git branches and writes its connection to `.env`. |
 | `scripts/flyway-migrate.sh` | What the extension's **Run Migrations** button runs; it calls `lakebase db migrate` (pinned Flyway 11.20.3). |
@@ -28,13 +29,14 @@ Time: about 45 minutes.
 |---|-------|--------|---------|
 | 1 | `main` | Connect the repo (`cp .env.example .env`) | Project + empty `production` branch in the Lakebase SCM view |
 | 2 | `main` | Deploy V1 with **Run Migrations** | Tables created on `production`, Flyway at v1 |
-| 3 | `main` | Load ~10k sample rows (`lakebase db seed`) | `Inserted 10012 row(s)` |
+| 3 | `main` | Load ~10k sample rows (`lakebase db seed`) | `10012 row(s) inserted or updated` |
 | 4 | `main` | Run the API | Members and providers broken (500), care events fine |
 | 5 | `feature/member-email` | `git checkout -b` | Lakebase branch created with the same schema and data |
-| 6 | feature | Drag in V2, **Run Migrations** | Members fixed on the branch only |
-| 7 | feature | Drag in V3, **Run Migrations** | Providers fixed, notes survive the rename, tests green |
-| 8 | feature | Commit | Migrations in Git |
-| 9 | `main` | Clean up | Branch deleted |
+| 6 | feature, then `main` | Run `lab/data/branch-changes.sql` on the branch; compare with `main` | Branch has Jane's 3 new events + an edit; `production` doesn't |
+| 7 | feature | Drag in V2, **Run Migrations** | Members fixed on the branch only |
+| 8 | feature | Drag in V3, **Run Migrations** | Providers fixed, notes survive the rename, tests green |
+| 9 | feature | Commit | Migrations in Git |
+| 10 | `main` | Clean up | Branch deleted |
 
 ## Facilitator setup (once per workshop)
 
@@ -78,7 +80,7 @@ Still on `main`, load the sample data into `production` (**Terminal → Run Task
 dotnet run --project src/Lakebase.Cli -- lakebase db seed
 ```
 
-**Expect:** `Inserted 10012 row(s)` (4,005 members, 1,003 providers, 5,004 care events) in a few seconds the first time, `Inserted 0 row(s)` on any re-run (it skips rows that exist).
+**Expect:** `10012 row(s) inserted or updated` (4,005 members, 1,003 providers, 5,004 care events) in a few seconds the first time, `0 row(s)` on any re-run (it skips rows that exist).
 
 ## 4. Look at the broken baseline
 
@@ -100,7 +102,22 @@ A terminal checkout is enough: the extension watches `.git/HEAD` (and polls ever
 
 **Expect:** a notification `Lakebase branch "feature-member-email" created and connected.` `.env` now has `LAKEBASE_BRANCH_ID=feature-member-email`, a new `LAKEBASE_HOST`, and `DB_USERNAME` (your email). This branch is a copy-on-write copy of `production`: same schema and the same ~10k seeded rows, created in seconds without copying the data.
 
-## 6. Stage V2 and migrate the branch
+## 6. Change data on the branch and compare
+
+Your branch's data is yours: writes stay on the branch and never reach `production`.
+
+1. Open `lab/data/branch-changes.sql` and read it: 3 new care events for Jane Doe (`M-1001`) and one edited description. Run it on the branch (**Lab: apply branch data changes**):
+   ```bash
+   dotnet run --project src/Lakebase.Cli -- lakebase db seed lab/data/branch-changes.sql
+   ```
+   **Expect:** `4 row(s) inserted or updated` (3 inserts + 1 update); a re-run reports `0`.
+2. Run the API and call `GET /api/careevents/member/1`. **Expect:** 5 events, including the three `Branch-only: …` rows and `Annual wellness exam (edited on branch)`.
+3. Stop the app and `git checkout main`. Within a few seconds the extension points `.env` back at `production` (`LAKEBASE_BRANCH_ID=production`). Start the API again (it reads `.env` at startup) and call the same endpoint. **Expect:** Jane's original 2 events and the unedited `Annual wellness exam`.
+4. `git checkout feature/member-email` to continue. The extension reconnects `.env` to your branch; your changes are still there.
+
+Writing your own `INSERT`/`UPDATE` works the same way: save it as a `.sql` file and run `lakebase db seed <file>` on whichever branch is checked out.
+
+## 7. Stage V2 and migrate the branch
 
 Drag `lab/migrations/V2__add_member_email.sql` into `db/migrations/` (or `cp lab/migrations/V2__add_member_email.sql db/migrations/`).
 
@@ -112,13 +129,13 @@ Click **Run Migrations** in the Lakebase SCM view, or run the **Lab: migrate** t
 - The extension's schema diff for the branch shows `Members.Email` added versus `production`.
 - `production` is unchanged: `git checkout main`, run the app, and members is still 500.
 
-## 7. Stage V3
+## 8. Stage V3
 
 Back on `feature/member-email` (or a new branch), copy `lab/migrations/V3__provider_email_and_notes.sql` into `db/migrations/` and run migrations again.
 
 **Expect:** `GET /api/providers` → 200 with the 1,003 seeded providers; each `notes` value is the old `CommentsText`, carried through the rename (e.g. `GET /api/providers/1` → Dr. Ada Lovelace, "Accepting new patients"). **Lab: integration tests** pass (8 tests).
 
-## 8. Commit it
+## 9. Commit it
 
 ```bash
 git add db/migrations
@@ -127,7 +144,7 @@ git commit -m "Add member and provider email columns"
 
 Never edit a migration after it has been applied anywhere; fix forward with a new `V{n}` file.
 
-## 9. Clean up
+## 10. Clean up
 
 Delete the feature branch from the extension (it deletes the Lakebase branch too), or:
 
@@ -145,6 +162,7 @@ LAKEBASE_ALLOW_BRANCH_DELETE=true dotnet run --project src/Lakebase.Cli -- lakeb
 | `No branch connection in .env` | Switch git branches once so the extension writes the connection, or click **Refresh Credentials**. |
 | `global.json` / SDK not found from the button | VS Code's terminal is using an older `dotnet`; put .NET 10 first on `PATH` and reload the window. |
 | Extension shows no .NET support | Upgrade to extension 0.7.1+. |
+| `Branches with an expiration date cannot have child branches` | Lakebase branches with a TTL can't be branched from. Branch from `main` (`production`, no TTL) rather than from another feature branch. |
 | Flyway says a version is `Future` | The database has a migration that isn't in your `db/migrations/` (e.g. applied on another branch); copy it in or switch branches. |
 
 ## Notes for the repo's CI

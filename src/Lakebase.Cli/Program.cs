@@ -364,8 +364,8 @@ dbSeed.SetAction(async parseResult =>
         var path = Path.IsPathRooted(file) ? file : Path.Combine(EnvConfig.FindRepoRoot() ?? ".", file);
         CliLog.Progress($"==> Seeding {settings.Endpoint ?? "DATABASE_URL"} from {file}");
         var rows = await SqlScriptRunner.RunFileAsync(settings, path);
-        CliLog.Progress($"==> Inserted {rows} row(s) (existing rows are left alone)");
-        return new { file, rowsInserted = rows };
+        CliLog.Progress($"==> {rows} row(s) inserted or updated (re-runs skip existing rows)");
+        return new { file, rowsAffected = rows };
     });
 });
 
