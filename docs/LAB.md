@@ -22,18 +22,28 @@ Time: about 45 minutes.
 | V1 + V2 | 200, 4,005 members (`email` null) | 500 | 200 |
 | V1 + V2 + V3 | 200 | 200, 1,003 providers; `notes` holds the old `CommentsText` | 200 |
 
+## Steps at a glance
+
+| # | Where | You do | You see |
+|---|-------|--------|---------|
+| 1 | `main` | Connect the repo (`cp .env.example .env`) | Project + empty `production` branch in the Lakebase SCM view |
+| 2 | `main` | Deploy V1 with **Run Migrations** | Tables created on `production`, Flyway at v1 |
+| 3 | `main` | Load ~10k sample rows (`lakebase db seed`) | `Inserted 10012 row(s)` |
+| 4 | `main` | Run the API | Members and providers broken (500), care events fine |
+| 5 | `feature/member-email` | `git checkout -b` | Lakebase branch created with the same schema and data |
+| 6 | feature | Drag in V2, **Run Migrations** | Members fixed on the branch only |
+| 7 | feature | Drag in V3, **Run Migrations** | Providers fixed, notes survive the rename, tests green |
+| 8 | feature | Commit | Migrations in Git |
+| 9 | `main` | Clean up | Branch deleted |
+
 ## Facilitator setup (once per workshop)
 
-1. Create the Lakebase project (any name; this lab uses `lakebase-dotnet-lab`):
+1. Create an empty Lakebase project (any name; this lab uses `lakebase-dotnet-lab`). Learners deploy the schema themselves in step 2.
    ```bash
    databricks postgres create-project lakebase-dotnet-lab -p <profile> \
      --json '{"spec":{"display_name":"Lakebase .NET SCM lab"}}'
    ```
-2. Apply V1 to the project's `production` branch so every learner's branch starts from it. From the repo root with a `.env` on `main` (see step 2 below):
-   ```bash
-   dotnet run --project src/Lakebase.Cli -- lakebase db migrate
-   ```
-3. Learners other than the project owner need a Postgres role on the branches they use; grant the workshop group access to the project in the Lakebase UI.
+2. With several learners, give each their own project (steps 2–3 change `production`), or have one person do steps 2–3 for everyone. Learners other than the project owner need a Postgres role on the branches they use; grant the workshop group access in the Lakebase UI.
 
 ## Prerequisites
 
@@ -52,17 +62,25 @@ code .
 
 `.env` needs only `LAKEBASE_PROJECT_ID` and `DATABRICKS_HOST` (or `DATABRICKS_CONFIG_PROFILE` if you have several CLI profiles for the workspace). The extension recognizes the project from `LAKEBASE_PROJECT_ID`; you do **not** need **Set Up Existing Project**. If you run it anyway, it rewrites `.env.example` and `.env` from its own template; restore the repo's copy with `git checkout -- .env.example`.
 
-**Expect:** the Lakebase SCM view lists the project and its `production` branch.
+**Expect:** the Lakebase SCM view lists the project and its `production` branch. On `main` the extension points `.env` at `production` (check `LAKEBASE_BRANCH_ID=production`); if those lines are missing, click **Refresh Credentials**.
 
-## 2. Load sample data and look at the broken baseline
+## 2. Deploy V1 to production
 
-On `main`, the extension points `.env` at `production`. Load the sample data there (**Terminal → Run Task → Lab: seed sample data**):
+`production` is empty. The **Schema Migrations** view (shown on `main`) lists the files in `db/migrations`: only `V1__initial_create.sql`. Click **Run Migrations** (or **Command Palette → Lakebase SCM: Run Migrations**, or the **Lab: migrate** task).
+
+**Expect:** Flyway prints `Migrating schema "public" to version "1 - initial create"` and `Successfully applied 1 migration ... now at version v1`, followed by `lakebase db info` showing V1 as `Success`. The `Members`, `Providers`, and `CareEvents` tables now exist, all empty.
+
+## 3. Load sample data
+
+Still on `main`, load the sample data into `production` (**Terminal → Run Task → Lab: seed sample data**):
 
 ```bash
 dotnet run --project src/Lakebase.Cli -- lakebase db seed
 ```
 
 **Expect:** `Inserted 10012 row(s)` (4,005 members, 1,003 providers, 5,004 care events) in a few seconds the first time, `Inserted 0 row(s)` on any re-run (it skips rows that exist).
+
+## 4. Look at the broken baseline
 
 Run the API (**Lab: run SampleApp (Swagger)**) and open http://localhost:5000/swagger.
 
@@ -72,7 +90,7 @@ Run the API (**Lab: run SampleApp (Swagger)**) and open http://localhost:5000/sw
 
 The data is there, but the C# models are ahead of the schema. Stop the app.
 
-## 3. Branch the code and the database
+## 5. Branch the code and the database
 
 ```bash
 git checkout -b feature/member-email
@@ -82,7 +100,7 @@ A terminal checkout is enough: the extension watches `.git/HEAD` (and polls ever
 
 **Expect:** a notification `Lakebase branch "feature-member-email" created and connected.` `.env` now has `LAKEBASE_BRANCH_ID=feature-member-email`, a new `LAKEBASE_HOST`, and `DB_USERNAME` (your email). This branch is a copy-on-write copy of `production`: same schema and the same ~10k seeded rows, created in seconds without copying the data.
 
-## 4. Stage V2 and migrate the branch
+## 6. Stage V2 and migrate the branch
 
 Drag `lab/migrations/V2__add_member_email.sql` into `db/migrations/` (or `cp lab/migrations/V2__add_member_email.sql db/migrations/`).
 
@@ -94,13 +112,13 @@ Click **Run Migrations** in the Lakebase SCM view, or run the **Lab: migrate** t
 - The extension's schema diff for the branch shows `Members.Email` added versus `production`.
 - `production` is unchanged: `git checkout main`, run the app, and members is still 500.
 
-## 5. Stage V3
+## 7. Stage V3
 
 Back on `feature/member-email` (or a new branch), copy `lab/migrations/V3__provider_email_and_notes.sql` into `db/migrations/` and run migrations again.
 
 **Expect:** `GET /api/providers` → 200 with the 1,003 seeded providers; each `notes` value is the old `CommentsText`, carried through the rename (e.g. `GET /api/providers/1` → Dr. Ada Lovelace, "Accepting new patients"). **Lab: integration tests** pass (8 tests).
 
-## 6. Commit it
+## 8. Commit it
 
 ```bash
 git add db/migrations
@@ -109,7 +127,7 @@ git commit -m "Add member and provider email columns"
 
 Never edit a migration after it has been applied anywhere; fix forward with a new `V{n}` file.
 
-## 7. Clean up
+## 9. Clean up
 
 Delete the feature branch from the extension (it deletes the Lakebase branch too), or:
 
