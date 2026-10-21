@@ -358,7 +358,21 @@ Table and column names are mixed-case, so keep the double quotes: `public."CareE
    curl -i http://localhost:5000/api/providers | head -1
    ```
 
-   Expect `HTTP/1.1 200 OK` for members (4,005 rows, `email` null) and still `HTTP/1.1 500 Internal Server Error` for providers. Press `Ctrl+C` in Terminal B.
+   Expect `HTTP/1.1 200 OK` for members and still `HTTP/1.1 500 Internal Server Error` for providers.
+
+4. Look at the members response. It's paginated: 10 members per page by default, ordered by id.
+
+   ```bash
+   curl -s http://localhost:5000/api/members
+   ```
+
+   Expect a page envelope: `"items"` holds 10 members (the first is Jane Doe, `M-1001`, with `"email":null`), followed by `"page":1,"pageSize":10,"totalCount":4005,"totalPages":401`. Ask for a different page:
+
+   ```bash
+   curl -s "http://localhost:5000/api/members?page=2&pageSize=3"
+   ```
+
+   Expect 3 members (`M-1004`, `M-1005`, `M-000001`) and `"totalPages":1335`. `pageSize` is capped at 100; try `?pageSize=500` to see the `400` validation error, `pageSize must be between 1 and 100.` Press `Ctrl+C` in Terminal B.
 
 `production` doesn't have V2. If you `git checkout main`, members fails there again.
 
@@ -388,7 +402,7 @@ Table and column names are mixed-case, so keep the double quotes: `public."CareE
    dotnet test --filter Category=Integration
    ```
 
-   Expect `Passed!  - Failed:     0, Passed:     8`.
+   Expect `Passed!  - Failed:     0, Passed:     13`. The tests create a few members of their own, so `totalCount` goes up afterwards.
 
 ## 9. Commit the migrations
 
