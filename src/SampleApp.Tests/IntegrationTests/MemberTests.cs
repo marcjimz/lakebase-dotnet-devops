@@ -14,14 +14,14 @@ public class MemberTests : IClassFixture<WebApplicationFactory<Program>>
         _client = factory.CreateClient();
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task GetMembers_ReturnsOk()
     {
         var response = await _client.GetAsync("/api/members");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task GetMembers_DefaultsToFirstPageOfTen()
     {
         await _client.PostAsJsonAsync("/api/members", NewMember());
@@ -37,7 +37,7 @@ public class MemberTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(page.Items.OrderBy(m => m.Id).Select(m => m.Id), page.Items.Select(m => m.Id));
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task GetMembers_PagesDoNotOverlap()
     {
         await _client.PostAsJsonAsync("/api/members", NewMember());
@@ -70,7 +70,7 @@ public class MemberTests : IClassFixture<WebApplicationFactory<Program>>
         planType = "Commercial",
     };
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task CreateMember_ReturnsCreated()
     {
         var member = new { memberId = $"TEST-{Guid.NewGuid():N}", firstName = "Test", lastName = "User", dateOfBirth = "1990-01-01T00:00:00Z", planType = "Commercial" };
@@ -81,7 +81,7 @@ public class MemberTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(member.firstName, created!.FirstName);
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task GetMember_NotFound_Returns404()
     {
         var response = await _client.GetAsync("/api/members/99999");

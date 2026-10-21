@@ -15,14 +15,14 @@ public class ProviderTests : IClassFixture<WebApplicationFactory<Program>>
         _client = factory.CreateClient();
     }
 
-    [Fact]
+    [RequiresSchemaFact(3)]
     public async Task GetProviders_ReturnsOk()
     {
         var response = await _client.GetAsync("/api/providers");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact]
+    [RequiresSchemaFact(3)]
     public async Task GetProviders_DefaultsToFirstPageOfTen()
     {
         var page = await _client.GetFromJsonAsync<PagedResult<Provider>>("/api/providers");
@@ -44,7 +44,7 @@ public class ProviderTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    [Fact]
+    [RequiresSchemaFact(3)]
     public async Task CreateProvider_RoundTripsEmailAndNotes()
     {
         var provider = new

@@ -17,7 +17,7 @@ public class MemberSchemaTests : IClassFixture<WebApplicationFactory<Program>>
         _client = factory.CreateClient();
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task CreateMember_ValidPayload_ReturnsMemberSchema()
     {
         var payload = MemberTestPayloads.CreateMember();
@@ -38,7 +38,7 @@ public class MemberSchemaTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Empty(created.CareEvents);
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task GetMemberById_ReturnsFullSchemaWithCareEvents()
     {
         var createResponse = await _client.PostAsJsonAsync("/api/members", MemberTestPayloads.CreateMember());
@@ -79,7 +79,7 @@ public class MemberSchemaTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True(careEvent.TryGetProperty("createdAt", out _));
     }
 
-    [Fact]
+    [RequiresSchemaFact(2)]
     public async Task CreateMember_WithNestedCareEvents_PersistsCareEvents()
     {
         var response = await _client.PostAsJsonAsync("/api/members", MemberTestPayloads.CreateMemberWithCareEvents());
