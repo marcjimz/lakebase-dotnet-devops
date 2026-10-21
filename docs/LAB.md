@@ -63,7 +63,7 @@ Time: about 45 minutes.
   export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH   # also add to your shell profile
   ```
   **Check from the repo root:** `dotnet --version` prints `10.0.401`. If it prints an older version (for example Homebrew's `dotnet@8` earlier on `PATH`), fix `PATH` before continuing, then restart VS Code so its terminal picks it up.
-- Databricks CLI, signed in: `databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com`
+- Databricks CLI, signed in: `databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com`. Note the profile name it saves; `.env` needs it.
 - Pinned Flyway: `dotnet run --project src/Lakebase.Cli -- lakebase db setup`
 
 ## 1. Connect the repo
@@ -74,7 +74,7 @@ cp .env.example .env
 code .
 ```
 
-`.env` needs only `LAKEBASE_PROJECT_ID` and `DATABRICKS_HOST` (or `DATABRICKS_CONFIG_PROFILE` if you have several CLI profiles for the workspace). The extension recognizes the project from `LAKEBASE_PROJECT_ID`; you do **not** need **Set Up Existing Project**. If you run it anyway, it rewrites `.env.example` and `.env` from its own template; restore the repo's copy with `git checkout -- .env.example`.
+`.env` needs `LAKEBASE_PROJECT_ID`, `DATABRICKS_HOST`, and `DATABRICKS_CONFIG_PROFILE` set to the profile you signed in with (`databricks auth profiles` lists them). The profile is required whenever `~/.databrickscfg` has more than one profile for the workspace: with only `DATABRICKS_HOST` the CLI can't choose, and the extension reports `sign-in completed but the session does not read back as authenticated`. The extension recognizes the project from `LAKEBASE_PROJECT_ID`; you do **not** need **Set Up Existing Project**. If you run it anyway, it rewrites `.env.example` and `.env` from its own template; restore the repo's copy with `git checkout -- .env.example`.
 
 **Expect:** the Lakebase SCM view lists the project and its `production` branch. On `main` the extension points `.env` at `production` (check `LAKEBASE_BRANCH_ID=production`); if those lines are missing, click **Refresh Credentials**.
 
@@ -171,6 +171,7 @@ LAKEBASE_ALLOW_BRANCH_DELETE=true dotnet run --project src/Lakebase.Cli -- lakeb
 | Symptom | Fix |
 |---------|-----|
 | `A new access token could not be retrieved because the refresh token is invalid` | `databricks auth login --host <workspace-url>` |
+| `session does not read back as authenticated ... default auth: cannot configure default credentials`, or `<a> and <b> match https://<workspace>` | Several CLI profiles point at the workspace. Set `DATABRICKS_CONFIG_PROFILE=<profile>` in `.env` (one that `databricks current-user me -p <profile>` accepts) and reload the window. |
 | `No branch connection in .env` | Switch git branches once so the extension writes the connection, or click **Refresh Credentials**. |
 | `A compatible .NET SDK was not found. Requested SDK version: 10.0.401` | Your terminal's `dotnet` is an older install (e.g. Homebrew `dotnet@8` on `PATH`). Put .NET 10 first (`export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH`), check `dotnet --version`, and restart VS Code. |
 | Extension shows no .NET support | You have an older build (0.6.x); install the [v0.7.2 VSIX](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2) and reload the window. |
