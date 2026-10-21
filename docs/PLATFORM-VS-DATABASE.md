@@ -36,7 +36,7 @@ Two independent flows. Locally both read the shared `.env` and authenticate as y
 | `lakebase db flyway -- …` | Pass-through (baseline, repair, …) |
 | `SampleApp` | API against the branch in `.env` (or an explicit `DATABASE_URL`) |
 
-Branch create writes `LAKEBASE_HOST`, `LAKEBASE_BRANCH_ID`, and `LAKEBASE_ENDPOINT` to `.env` (the same keys the Lakebase SCM hook writes) and removes a stale `DATABASE_URL` / `DB_PASSWORD`, unless `--no-write-env`.
+Branch create writes `LAKEBASE_HOST`, `LAKEBASE_BRANCH_ID`, and `LAKEBASE_ENDPOINT` to `.env` (the same keys the Lakebase SCM extension writes on a branch switch) and removes a stale `DATABASE_URL` / `DB_PASSWORD`, unless `--no-write-env`.
 
 `DATABASE_URL` is optional and may be Npgsql keywords, `postgresql://`, or `jdbc:postgresql://`; it is normalized for Npgsql. `LAKEBASE_ENDPOINT` may be a full `projects/…/endpoints/<id>` path or just the endpoint id combined with `LAKEBASE_PROJECT_ID` + `LAKEBASE_BRANCH_ID`.
 

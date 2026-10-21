@@ -63,7 +63,7 @@ Run from the repo root. Local CLI uses the shared `.env` for **one** project at 
 dotnet run --project src/Lakebase.Cli -- \
   lakebase platform branch create feature-add-provider-phone --ttl-hours 168
 
-# add db/migrations/V2__add_provider_phone_number.sql
+# add db/migrations/V4__add_provider_phone_extension.sql (V2/V3 are reserved for the lab)
 dotnet run --project src/Lakebase.Cli -- lakebase db lint
 dotnet run --project src/Lakebase.Cli -- lakebase db migrate
 dotnet run --project src/Lakebase.Cli -- lakebase db validate

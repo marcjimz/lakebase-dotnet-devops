@@ -433,61 +433,34 @@ git commit -m "Add member and provider email columns"
 
 Never edit a migration after it has been applied anywhere. Fix forward with a new `V{n}` file instead.
 
-## 10. Deploy the migrations to production
+## 10. Deploy to production
 
-Lakebase has no database merge. Schema reaches `production` the same way it reached your branch: by running the committed Flyway files there. Data doesn't move, so your step 6 branch-only rows stay on the feature branch.
+One merge, then migrate and test `production`. Lakebase has no database merge: schema reaches `production` by running the committed Flyway files there. Data doesn't move, so your step 6 branch-only rows stay on the feature branch.
 
-1. Merge the feature branch into `main`:
+1. Merge your branch into `main`:
 
    ```bash
    git checkout main
    git merge feature/member-email
    ```
 
-   Expect `db/migrations/V2__add_member_email.sql` and `db/migrations/V3__provider_email_and_notes.sql` to arrive on `main`: a fast-forward if `main` hasn't moved since you branched, otherwise a merge commit (accept the default message). Check with `ls db/migrations`.
+   Accept the default message if git opens an editor. `ls db/migrations` now lists V1, V2, and V3, and `grep '^LAKEBASE_BRANCH_ID=' .env` shows `LAKEBASE_BRANCH_ID=production` (wait a few seconds if it still shows the feature branch).
 
-2. Confirm `.env` points at `production` again:
-
-   ```bash
-   grep '^LAKEBASE_BRANCH_ID=' .env
-   ```
-
-   Expect `LAKEBASE_BRANCH_ID=production`. Wait a few seconds and repeat if it still shows the feature branch.
-
-3. Check what's pending on `production` before you change it:
-
-   ```bash
-   dotnet run --project src/Lakebase.Cli -- lakebase db info
-   ```
-
-   Expect V1 as `Success` and V2 and V3 as `Pending`.
-
-4. Deploy. Click **Run Migrations**, or run:
+2. Run the migrations against `production`. Click **Run Migrations**, or run:
 
    ```bash
    ./scripts/flyway-migrate.sh
    ```
 
-   Expect `Successfully applied 2 migrations to schema "public", now at version v3`, and `lakebase db info` showing V1–V3 as `Success`.
+   Expect `Successfully applied 2 migrations to schema "public", now at version v3`.
 
-5. Check production through the API. Start it in Terminal B with `dotnet run --project src/SampleApp`, then in Terminal A:
-
-   ```bash
-   curl -i http://localhost:5000/api/members | head -1
-   curl -i http://localhost:5000/api/providers | head -1
-   ```
-
-   Expect `HTTP/1.1 200 OK` for both: the endpoints that were broken in step 4 work on `production` now. Press `Ctrl+C` in Terminal B.
-
-6. Confirm only the schema was promoted, not your branch's data:
+3. Run the tests against `production`. Click **Run Tests**, or run:
 
    ```bash
-   databricks psql --project lakebase-dotnet-lab --branch production -- -c 'select count(*) from public."CareEvents"'
+   ./scripts/run-tests.sh
    ```
 
-   Expect `5004`. Your branch still has `5007`.
-
-Don't run `./scripts/run-tests.sh` on `main`: the integration tests create members and providers, and test rows don't belong in `production`. Your feature branch, a copy of `production` with the same migrations applied, is where the tests ran, which makes it your rehearsal. In the repo's CI, `production-promote.yml` does the same deploy with a snapshot and a copy-on-write rehearsal first; see `docs/BRANCHING-STRATEGY.md`.
+   Expect `Total tests: 79`, `Passed: 79`, nothing skipped. The endpoints that were broken in step 4 now work on `production`. The tests add a few test members and providers there.
 
 ## 11. Clean up
 

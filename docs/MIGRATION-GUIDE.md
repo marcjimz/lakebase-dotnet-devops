@@ -29,9 +29,11 @@ Rehearse baseline in Dev. Never baseline Production without a snapshot and an ex
 Update EF models for the ORM, then add the matching Flyway file. SQL is authoritative; there is no `has-pending-model-changes` check.
 
 ```bash
-# db/migrations/V2__add_provider_phone_number.sql
-# ALTER TABLE "Providers" ADD COLUMN "PhoneNumber" text;
+# db/migrations/V4__add_provider_phone_extension.sql
+# ALTER TABLE "Providers" ADD COLUMN "PhoneExtension" text;
 ```
+
+V2 and V3 are reserved for the [lab](LAB.md) (`lab/migrations/`), so new migrations in this repo start at V4.
 
 ### 2. Feature branch + migrate
 

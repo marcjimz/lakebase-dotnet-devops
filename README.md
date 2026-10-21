@@ -13,22 +13,26 @@ Promotion follows Git `develop` → `staging` → `main`. Each stage selects its
 | `lab/seed` | Lab sample data (`lakebase db seed`), not a migration |
 | `lab/data` | Branch-only data changes for the lab's compare-branches step |
 | `conf/flyway.conf` | Non-secret Flyway settings |
-| `src/SampleApp` | Sample API + EF Core models/DbContext (runtime ORM only) |
-| `src/SampleApp.Tests` | Unit tests + integration tests (`Category=Integration`) |
+| `scripts/` | `flyway-migrate.sh` and `run-tests.sh`, run by the Lakebase SCM extension's **Run Migrations** and **Run Tests** buttons (and usable directly); `refresh-token.sh` is the extension's no-op wrapper |
+| `src/SampleApp` | Sample API (members, providers, care events) + EF Core models/DbContext (runtime ORM only) |
+| `src/SampleApp.Tests` | Unit tests + schema-aware integration tests (`Category=Integration`) |
 | `src/Lakebase` | Library (auth, platform ops, credential minting) |
-| `src/Lakebase.Cli` | CLI (`lakebase platform` / `lakebase db setup|lint|migrate|validate|info`) |
-| `docs/` | Platform vs database, branching, migrations, rulesets |
+| `src/Lakebase.Cli` | CLI (`lakebase platform` / `lakebase db setup|lint|migrate|validate|info|seed`) |
+| `docs/` | [Lab](docs/LAB.md), platform vs database, branching, migrations, rulesets |
 
 ## Config
 
 One `.env` at the repo root is shared by SampleApp, the `lakebase` CLI, and the [Lakebase SCM VS Code extension](docs/LAB.md):
 
 ```bash
-cp .env.example .env   # set LAKEBASE_PROJECT_ID and DATABRICKS_HOST (or DATABRICKS_CONFIG_PROFILE)
 databricks auth login --host <workspace-url>
+databricks auth profiles
+cp .env.example .env
 ```
 
-Locally you authenticate as yourself: no PAT, client secret, or database password goes in `.env`. The extension's post-checkout hook (or `lakebase platform branch create`) writes the branch connection metadata (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `LAKEBASE_ENDPOINT`, `DB_USERNAME`), and the app and Flyway mint a short-lived Postgres credential from it.
+Set three lines in `.env`: `LAKEBASE_PROJECT_ID`, `DATABRICKS_HOST`, and `DATABRICKS_CONFIG_PROFILE` (a profile from `databricks auth profiles` whose `Valid` column is `YES`; required when several profiles point at the same workspace).
+
+Locally you authenticate as yourself: no PAT, client secret, or database password goes in `.env`. The rest of the file is the branch connection (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`, `DATABASE_URL`), which the Lakebase SCM extension writes on every git branch switch (or `lakebase platform branch create` writes). Until it has, the app and the CLI pair the checked-out git branch with its Lakebase branch (`main` → `production`, `feature/x` → `feature-x`) and look up the host through the Lakebase API. Either way they mint a short-lived Postgres credential from your login.
 
 | `LAKEBASE_AUTH_MODE` | Where | Credentials |
 |----------------------|-------|-------------|
@@ -64,6 +68,25 @@ dotnet run --project src/SampleApp
 ```
 
 Swagger: `http://localhost:5000/swagger`
+
+## API
+
+| Endpoint | Notes |
+|----------|-------|
+| `GET /api/members?page=1&pageSize=10` | Paginated, ordered by id. Returns `{ items, page, pageSize, totalCount, totalPages }`. `pageSize` is 1–100 (default 10); out-of-range values return a 400 validation problem. |
+| `GET /api/members/{id}` / `POST /api/members` | One member with its care events / create a member |
+| `GET /api/providers?page=1&pageSize=10` | Paginated the same way as members |
+| `GET /api/providers/{id}` / `POST /api/providers` | One provider / create a provider |
+| `GET /api/careevents/member/{memberId}` / `POST /api/careevents` | A member's care events / create one |
+
+## Tests
+
+```bash
+./scripts/run-tests.sh                                  # unit + integration, against the branch in .env
+dotnet test --filter "Category!=Integration"            # unit tests only, no database
+```
+
+Integration tests read the branch's latest Flyway version from `flyway_schema_history`. Tests that need a later migration are marked `[RequiresSchemaFact(n)]` / `[RequiresSchemaTheory(n)]` and are skipped, with the migration to apply, instead of failing. If the database can't be reached, they run and fail.
 
 ## Schema change workflow
 
