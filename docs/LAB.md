@@ -14,7 +14,7 @@ The repo pieces you will touch:
 - `db/migrations/` is the live Flyway ledger. It starts with only `V1__initial_create.sql`.
 - `lab/migrations/` holds the staged lab migrations (`V2`, `V3`). Flyway ignores them until you copy them into `db/migrations/`.
 - `lab/seed/seed.sql` is about 10,000 rows of sample data. `lab/data/branch-changes.sql` is a small set of edits for step 6.
-- `scripts/flyway-migrate.sh` is what the extension's **Run Migrations** button runs. Running it yourself does exactly the same thing.
+- `scripts/flyway-migrate.sh` and `scripts/run-tests.sh` are what the extension's **Run Migrations** and **Run Tests** buttons run. Running them yourself does exactly the same thing.
 
 ## Facilitator setup (once per workshop)
 
@@ -200,6 +200,14 @@ That is 4,005 members, 1,003 providers, and 5,004 care events. Running it again 
 
 4. Stop the API: press `Ctrl+C` in Terminal B.
 
+5. Run the tests. Click **Run Tests** in the Lakebase SCM view, or run the same command:
+
+   ```bash
+   ./scripts/run-tests.sh
+   ```
+
+   Expect `Total tests: 79`, `Passed: 68`, `Skipped: 11`. Unit tests and the V1-level integration tests (care events, paging validation) pass. Every member and provider test is skipped with a message such as `Needs schema V2; this branch is at V1. Copy lab/migrations/V2__*.sql into db/migrations and run ./scripts/flyway-migrate.sh.` Tests read the branch's Flyway version, so they never fail just because a migration hasn't been applied yet.
+
 ## 5. Branch the code and the database
 
 1. Create a feature branch in Terminal A:
@@ -374,6 +382,16 @@ Table and column names are mixed-case, so keep the double quotes: `public."CareE
 
    Expect 3 members (`M-1004`, `M-1005`, `M-000001`) and `"totalPages":1335`. `pageSize` is capped at 100; try `?pageSize=500` to see the `400` validation error, `pageSize must be between 1 and 100.` Press `Ctrl+C` in Terminal B.
 
+5. Run the tests again:
+
+   ```bash
+   ./scripts/run-tests.sh
+   ```
+
+   Expect `Passed: 76`, `Skipped: 3`. The member tests now run and pass; only the provider tests are still skipped, waiting for V3.
+
+6. Optional: add a test for your change. Members now have an email, so a test that creates a member with an `email` and reads it back belongs with the other member tests in `src/SampleApp.Tests/IntegrationTests/MemberTests.cs`. Mark it `[RequiresSchemaFact(2)]` instead of `[Fact]` so it's skipped, not failed, on branches that don't have V2 yet. Run `./scripts/run-tests.sh` again to see it pass.
+
 `production` doesn't have V2. If you `git checkout main`, members fails there again.
 
 ## 8. Stage V3 and run the tests
@@ -394,15 +412,17 @@ Table and column names are mixed-case, so keep the double quotes: `public."CareE
    curl -s http://localhost:5000/api/providers/1
    ```
 
-   Expect `HTTP/1.1 200 OK`. Provider 1 is `Dr. Ada Lovelace`, with `"notes":"Accepting new patients"`: the old `CommentsText` survived the rename. Press `Ctrl+C` in Terminal B.
+   Expect `HTTP/1.1 200 OK`. Provider 1 is `Dr. Ada Lovelace`, with `"notes":"Accepting new patients"`: the old `CommentsText` survived the rename. `GET /api/providers` is paginated like members: `curl -s http://localhost:5000/api/providers` returns 10 providers with `"totalCount":1003,"totalPages":101`. Press `Ctrl+C` in Terminal B.
 
-3. Run the integration tests against your branch:
+3. Run the full test suite against your branch. Click **Run Tests**, or:
 
    ```bash
-   dotnet test --filter Category=Integration
+   ./scripts/run-tests.sh
    ```
 
-   Expect `Passed!  - Failed:     0, Passed:     13`. The tests create a few members of their own, so `totalCount` goes up afterwards.
+   Expect `Total tests: 79`, `Passed: 79`, nothing skipped. The tests create a few members and providers of their own, so `totalCount` goes up afterwards.
+
+4. Optional: add a test for the V3 change, for example a provider created with `notes` returns them, in `ProviderTests.cs`, marked `[RequiresSchemaFact(3)]`.
 
 ## 9. Commit the migrations
 
