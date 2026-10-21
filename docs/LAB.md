@@ -433,17 +433,72 @@ git commit -m "Add member and provider email columns"
 
 Never edit a migration after it has been applied anywhere. Fix forward with a new `V{n}` file instead.
 
-## 10. Clean up
+## 10. Deploy the migrations to production
 
-Delete the branch from the extension's Lakebase SCM view, which removes the Lakebase branch too. Or run:
+Lakebase has no database merge. Schema reaches `production` the same way it reached your branch: by running the committed Flyway files there. Data doesn't move, so your step 6 branch-only rows stay on the feature branch.
+
+1. Merge the feature branch into `main`:
+
+   ```bash
+   git checkout main
+   git merge feature/member-email
+   ```
+
+   Expect `db/migrations/V2__add_member_email.sql` and `db/migrations/V3__provider_email_and_notes.sql` to arrive on `main`: a fast-forward if `main` hasn't moved since you branched, otherwise a merge commit (accept the default message). Check with `ls db/migrations`.
+
+2. Confirm `.env` points at `production` again:
+
+   ```bash
+   grep '^LAKEBASE_BRANCH_ID=' .env
+   ```
+
+   Expect `LAKEBASE_BRANCH_ID=production`. Wait a few seconds and repeat if it still shows the feature branch.
+
+3. Check what's pending on `production` before you change it:
+
+   ```bash
+   dotnet run --project src/Lakebase.Cli -- lakebase db info
+   ```
+
+   Expect V1 as `Success` and V2 and V3 as `Pending`.
+
+4. Deploy. Click **Run Migrations**, or run:
+
+   ```bash
+   ./scripts/flyway-migrate.sh
+   ```
+
+   Expect `Successfully applied 2 migrations to schema "public", now at version v3`, and `lakebase db info` showing V1–V3 as `Success`.
+
+5. Check production through the API. Start it in Terminal B with `dotnet run --project src/SampleApp`, then in Terminal A:
+
+   ```bash
+   curl -i http://localhost:5000/api/members | head -1
+   curl -i http://localhost:5000/api/providers | head -1
+   ```
+
+   Expect `HTTP/1.1 200 OK` for both: the endpoints that were broken in step 4 work on `production` now. Press `Ctrl+C` in Terminal B.
+
+6. Confirm only the schema was promoted, not your branch's data:
+
+   ```bash
+   databricks psql --project lakebase-dotnet-lab --branch production -- -c 'select count(*) from public."CareEvents"'
+   ```
+
+   Expect `5004`. Your branch still has `5007`.
+
+Don't run `./scripts/run-tests.sh` on `main`: the integration tests create members and providers, and test rows don't belong in `production`. Your feature branch, a copy of `production` with the same migrations applied, is where the tests ran, which makes it your rehearsal. In the repo's CI, `production-promote.yml` does the same deploy with a snapshot and a copy-on-write rehearsal first; see `docs/BRANCHING-STRATEGY.md`.
+
+## 11. Clean up
+
+Delete the feature branch from the extension's Lakebase SCM view, which removes the Lakebase branch too. Or run:
 
 ```bash
-git checkout main
-git branch -D feature/member-email
+git branch -d feature/member-email
 LAKEBASE_ALLOW_BRANCH_DELETE=true dotnet run --project src/Lakebase.Cli -- lakebase platform branch delete feature-member-email
 ```
 
-Expect `==> Branch deleted.`
+Expect `==> Branch deleted.` `production` keeps V1–V3 and the sample data.
 
 ## Troubleshooting
 
