@@ -74,13 +74,21 @@ cp .env.example .env
 code .
 ```
 
-`.env` needs `LAKEBASE_PROJECT_ID`, `DATABRICKS_HOST`, and `DATABRICKS_CONFIG_PROFILE` set to the profile you signed in with (`databricks auth profiles` lists them). The profile is required whenever `~/.databrickscfg` has more than one profile for the workspace: with only `DATABRICKS_HOST` the CLI can't choose, and the extension reports `sign-in completed but the session does not read back as authenticated`. The extension recognizes the project from `LAKEBASE_PROJECT_ID`; you do **not** need **Set Up Existing Project**. If you run it anyway, it rewrites `.env.example` and `.env` from its own template; restore the repo's copy with `git checkout -- .env.example`.
+Fill in the three lines at the top of `.env`. They are all you set by hand:
 
-**Expect:** the Lakebase SCM view lists the project and its `production` branch. On `main` the extension points `.env` at `production` (check `LAKEBASE_BRANCH_ID=production`); if those lines are missing, click **Refresh Credentials**.
+```dotenv
+LAKEBASE_PROJECT_ID=lakebase-dotnet-lab
+DATABRICKS_HOST=https://fevm-real-time-mode-demo.cloud.databricks.com
+DATABRICKS_CONFIG_PROFILE=<your profile>   # from `databricks auth profiles`, Valid = YES
+```
+
+Everything else is the **branch connection** (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`, `DATABASE_URL`). You don't type it: the extension writes it whenever you switch git branches or click **Refresh Credentials**, and until it has, the app and the Run Migrations script work it out themselves. They pair the checked-out git branch with its Lakebase branch (`main` → `production`, `feature/x` → `feature-x`) and ask the Lakebase API for its host. So on a fresh clone, on `main`, the three lines above are enough for step 2. The profile is required whenever `~/.databrickscfg` has more than one profile for the workspace: with only `DATABRICKS_HOST` the CLI can't choose, and the extension reports `sign-in completed but the session does not read back as authenticated`. The extension recognizes the project from `LAKEBASE_PROJECT_ID`; you do **not** need **Set Up Existing Project**. If you run it anyway, it rewrites `.env.example` and `.env` from its own template; restore the repo's copy with `git checkout -- .env.example`.
+
+**Expect:** the Lakebase SCM view lists the project and its `production` branch, with `main` under **Current Tier**. `.env` may not have the branch connection lines yet; that's fine (see above). Click **Refresh Credentials** if you want to see them written.
 
 ## 2. Deploy V1 to production
 
-`production` is empty. The **Schema Migrations** view (shown on `main`) lists the files in `db/migrations`: only `V1__initial_create.sql`. Click **Run Migrations** (or **Command Palette → Lakebase SCM: Run Migrations**, or the **Lab: migrate** task).
+Stay on `main` (`git branch --show-current` prints `main`), so this targets `production`. `production` is empty. The **Schema Migrations** view (shown on `main`) lists the files in `db/migrations`: only `V1__initial_create.sql`. Click **Run Migrations** (or **Command Palette → Lakebase SCM: Run Migrations**, or the **Lab: migrate** task).
 
 **Expect:** Flyway prints `Migrating schema "public" to version "1 - initial create"` and `Successfully applied 1 migration ... now at version v1`, followed by `lakebase db info` showing V1 as `Success`. The `Members`, `Providers`, and `CareEvents` tables now exist, all empty.
 
@@ -172,7 +180,7 @@ LAKEBASE_ALLOW_BRANCH_DELETE=true dotnet run --project src/Lakebase.Cli -- lakeb
 |---------|-----|
 | `A new access token could not be retrieved because the refresh token is invalid` | `databricks auth login --host <workspace-url>` |
 | `session does not read back as authenticated ... default auth: cannot configure default credentials`, or `<a> and <b> match https://<workspace>` | Several CLI profiles point at the workspace. Set `DATABRICKS_CONFIG_PROFILE=<profile>` in `.env` (one that `databricks current-user me -p <profile>` accepts) and reload the window. |
-| `No branch connection in .env` | Switch git branches once so the extension writes the connection, or click **Refresh Credentials**. |
+| `No branch connection: set LAKEBASE_PROJECT_ID in .env and check out a git branch whose Lakebase branch exists` | Check the three `.env` lines from step 1. The Lakebase branch for your git branch must exist (`main` → `production`; feature branches are created by the extension when you switch to them). Or click **Refresh Credentials**. |
 | `A compatible .NET SDK was not found. Requested SDK version: 10.0.401` | Your terminal's `dotnet` is an older install (e.g. Homebrew `dotnet@8` on `PATH`). Put .NET 10 first (`export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH`), check `dotnet --version`, and restart VS Code. |
 | Extension shows no .NET support | You have an older build (0.6.x); install the [v0.7.2 VSIX](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2) and reload the window. |
 | `Branches with an expiration date cannot have child branches` | Lakebase branches with a TTL can't be branched from. Branch from `main` (`production`, no TTL) rather than from another feature branch. |

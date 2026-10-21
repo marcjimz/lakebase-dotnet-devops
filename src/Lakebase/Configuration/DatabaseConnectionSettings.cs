@@ -70,11 +70,19 @@ public sealed class DatabaseConnectionSettings : IWorkspaceCredentials
             return endpoint;
 
         var project = EnvConfig.Get("LAKEBASE_PROJECT_ID");
-        var branch = EnvConfig.Get("LAKEBASE_BRANCH_ID");
+        var branch = ResolveBranchId();
         if (project is null || branch is null)
             return null;
         return $"projects/{project}/branches/{branch}/endpoints/{endpoint ?? DefaultEndpointId}";
     }
+
+    /// <summary>
+    /// <c>LAKEBASE_BRANCH_ID</c> (written by the extension), else the Lakebase branch paired with the
+    /// checked-out git branch, so a fresh .env on main works before the extension has synced it.
+    /// </summary>
+    public static string? ResolveBranchId()
+        => EnvConfig.Get("LAKEBASE_BRANCH_ID")
+            ?? (GitBranch.Current() is { } gitBranch ? GitBranch.ToLakebaseBranch(gitBranch) : null);
 
     public static string DatabaseName()
         => EnvConfig.Get("LAKEBASE_DATABASE_NAME")
@@ -85,9 +93,10 @@ public sealed class DatabaseConnectionSettings : IWorkspaceCredentials
     private static string FromBranchMetadata(Credentials credentials, IDatabricksCli? cli)
     {
         var pgHost = EnvConfig.Get("LAKEBASE_HOST")
+            ?? LookUpEndpointHost(credentials, cli)
             ?? throw new InvalidOperationException(
-                "No branch connection in .env (LAKEBASE_HOST / DATABASE_URL). Check out a git branch so the "
-                + "Lakebase SCM hook writes it, or run 'lakebase platform branch create'.");
+                "No branch connection: set LAKEBASE_PROJECT_ID in .env and check out a git branch whose Lakebase "
+                + "branch exists (main pairs with production), or click Refresh Credentials in the Lakebase SCM view.");
 
         var username = EnvConfig.Get("DB_USERNAME");
         if (username is null && WorkspaceAuthModes.Resolve(credentials) == WorkspaceAuthMode.DatabricksCli)
@@ -103,6 +112,20 @@ public sealed class DatabaseConnectionSettings : IWorkspaceCredentials
             DatabaseName(),
             username ?? throw new InvalidOperationException("Set DB_USERNAME in .env (your Postgres role)."),
             password: null);
+    }
+
+    /// <summary>Asks the Lakebase API for the resolved branch's endpoint host (one GET, at startup).</summary>
+    private static string? LookUpEndpointHost(Credentials credentials, IDatabricksCli? cli)
+    {
+        var project = EnvConfig.Get("LAKEBASE_PROJECT_ID");
+        var branch = ResolveBranchId();
+        if (project is null || branch is null)
+            return null;
+
+        var api = new LakebaseApiClient(credentials, new DatabricksWorkspaceAuth(credentials, cli));
+        using var endpoints = api.TryGetAsync($"/api/2.0/postgres/projects/{project}/branches/{branch}/endpoints")
+            .GetAwaiter().GetResult();
+        return endpoints is null ? null : LakebasePlatformService.TryGetEndpointHost(endpoints.RootElement);
     }
 
     private sealed record Credentials(

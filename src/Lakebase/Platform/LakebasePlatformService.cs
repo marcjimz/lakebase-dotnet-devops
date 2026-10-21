@@ -740,7 +740,7 @@ public sealed class LakebasePlatformService(
         File.AppendAllText(outputFile, $"endpoint_id={endpointId}\n");
     }
 
-    private static string? TryGetEndpointHost(JsonElement root)
+    public static string? TryGetEndpointHost(JsonElement root)
     {
         if (!root.TryGetProperty("endpoints", out var endpoints) || endpoints.GetArrayLength() == 0)
             return null;
@@ -756,7 +756,7 @@ public sealed class LakebasePlatformService(
         return null;
     }
 
-    private static string? TryGetEndpointId(JsonElement root)
+    public static string? TryGetEndpointId(JsonElement root)
     {
         if (!root.TryGetProperty("endpoints", out var endpoints) || endpoints.GetArrayLength() == 0)
             return null;

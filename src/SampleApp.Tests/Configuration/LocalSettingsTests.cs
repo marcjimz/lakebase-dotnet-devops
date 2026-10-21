@@ -294,7 +294,37 @@ public class DatabaseConnectionSettingsTests
     {
         using var _ = new EnvScope(("DATABRICKS_HOST", "https://lab.cloud.databricks.com"));
         var ex = Assert.Throws<InvalidOperationException>(() => DatabaseConnectionSettings.Load());
-        Assert.Contains("Check out a git branch", ex.Message);
+        Assert.Contains("No branch connection", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("main", "production")]
+    [InlineData("master", "production")]
+    [InlineData("feature/member-email", "feature-member-email")]
+    public void GitBranch_MapsToLakebaseBranch(string git, string lakebase)
+    {
+        using var _ = new EnvScope();
+        Assert.Equal(lakebase, GitBranch.ToLakebaseBranch(git));
+    }
+
+    [Fact]
+    public void GitBranch_ReadsHeadAndIgnoresDetached()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"repo-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        File.WriteAllText(Path.Combine(root, ".git", "HEAD"), "ref: refs/heads/feature/x\n");
+        Assert.Equal("feature/x", GitBranch.Current(root));
+
+        File.WriteAllText(Path.Combine(root, ".git", "HEAD"), "4e0346c1b2a3\n");
+        Assert.Null(GitBranch.Current(root));
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public void BranchIdFromEnv_WinsOverGit()
+    {
+        using var _ = new EnvScope(("LAKEBASE_BRANCH_ID", "feature-pinned"), ("LAKEBASE_PROJECT_ID", "p"));
+        Assert.Equal("projects/p/branches/feature-pinned/endpoints/primary", DatabaseConnectionSettings.ResolveEndpoint());
     }
 
     [Fact]
