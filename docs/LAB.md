@@ -218,25 +218,67 @@ That is 4,005 members, 1,003 providers, and 5,004 care events. Running it again 
 
    Expect `LAKEBASE_BRANCH_ID=feature-member-email` and a new `LAKEBASE_HOST`. This branch is a copy-on-write copy of `production`: the same V1 schema and the same 10,012 rows, created in seconds without copying data.
 
-## 6. Change data on the branch and compare
+## 6. Change data on the branch, compare, and reset
 
-1. Apply the branch-only changes: 3 new care events for Jane Doe and one edited description. Read `lab/data/branch-changes.sql` first if you like.
+You'll query both branches with SQL, change data on yours, check the API on each branch, then reset your branch from `production` and apply the changes again.
+
+The SQL commands use `databricks psql`, which signs in with your CLI profile. Tell it which profile to use, once, in Terminal A:
+
+```bash
+export DATABRICKS_CONFIG_PROFILE=<your profile from step 1>
+```
+
+Table and column names are mixed-case, so keep the double quotes: `public."CareEvents"`, not `public.CareEvents`.
+
+1. Count care events on both branches before changing anything:
+
+   ```bash
+   databricks psql --project lakebase-dotnet-lab --branch production -- -c 'select count(*) from public."CareEvents"'
+   ```
+
+   ```bash
+   databricks psql --project lakebase-dotnet-lab --branch feature-member-email -- -c 'select count(*) from public."CareEvents"'
+   ```
+
+   Expect `5004` from both. Your branch is still an exact copy.
+
+2. Apply the branch-only changes to your branch: 3 new care events for Jane Doe and one edited description. Read `lab/data/branch-changes.sql` first if you like.
 
    ```bash
    dotnet run --project src/Lakebase.Cli -- lakebase db seed lab/data/branch-changes.sql
    ```
 
-   Expect `==> 4 row(s) inserted or updated`. A re-run reports `0`.
+   Expect `==> Seeding projects/lakebase-dotnet-lab/branches/feature-member-email/endpoints/primary ...` and `==> 4 row(s) inserted or updated`. A re-run reports `0`.
 
-2. Start the API in Terminal B with `dotnet run --project src/SampleApp`, then look at Jane's events in Terminal A:
+3. Count again on both branches:
+
+   ```bash
+   databricks psql --project lakebase-dotnet-lab --branch production -- -c 'select count(*) from public."CareEvents"'
+   ```
+
+   ```bash
+   databricks psql --project lakebase-dotnet-lab --branch feature-member-email -- -c 'select count(*) from public."CareEvents"'
+   ```
+
+   Expect `5004` on `production` and `5007` on your branch.
+
+4. See Jane's events on your branch:
+
+   ```bash
+   databricks psql --project lakebase-dotnet-lab --branch feature-member-email -- -c 'select "EventType", "Description" from public."CareEvents" where "MemberId" = 1'
+   ```
+
+   Expect 5 rows: `Routine blood panel`, `Annual wellness exam (edited on branch)`, `Branch-only: follow-up call`, `Branch-only: chest X-ray`, and `Branch-only: new prescription`.
+
+5. Now check the same thing through the API. Start it in Terminal B with `dotnet run --project src/SampleApp`, then call it in Terminal A:
 
    ```bash
    curl -s http://localhost:5000/api/careevents/member/1
    ```
 
-   Expect 5 events: `Routine blood panel`, `Annual wellness exam (edited on branch)`, `Branch-only: follow-up call`, `Branch-only: chest X-ray`, and `Branch-only: new prescription`. Press `Ctrl+C` in Terminal B.
+   Expect the same 5 events. Press `Ctrl+C` in Terminal B.
 
-3. Switch to `main` and confirm the extension points `.env` back at `production`:
+6. Switch to `main` and confirm the extension points `.env` back at `production`:
 
    ```bash
    git checkout main
@@ -245,15 +287,15 @@ That is 4,005 members, 1,003 providers, and 5,004 care events. Running it again 
 
    Expect `LAKEBASE_BRANCH_ID=production`. Wait a few seconds and repeat the `grep` if it still shows the feature branch.
 
-4. Start the API again in Terminal B (it reads `.env` at startup), then repeat the call:
+7. Start the API again in Terminal B (it reads `.env` at startup), then repeat the call:
 
    ```bash
    curl -s http://localhost:5000/api/careevents/member/1
    ```
 
-   Expect only Jane's original 2 events, `Routine blood panel` and the unedited `Annual wellness exam`. The branch's writes never reached `production`. Press `Ctrl+C` in Terminal B.
+   Expect only Jane's original 2 events, `Routine blood panel` and the unedited `Annual wellness exam`. Your branch's writes never reached `production`. Press `Ctrl+C` in Terminal B.
 
-5. Go back to your branch and confirm `.env` follows:
+8. Go back to your branch and confirm `.env` follows:
 
    ```bash
    git checkout feature/member-email
@@ -261,6 +303,37 @@ That is 4,005 members, 1,003 providers, and 5,004 care events. Running it again 
    ```
 
    Expect `LAKEBASE_BRANCH_ID=feature-member-email`.
+
+9. Reset your branch from `production`. Reset is only available in the Lakebase UI:
+
+   1. In the Lakebase SCM view, click the project name to open it in Databricks (or **Command Palette → Lakebase SCM: Open in Databricks Console**).
+   2. Go to **Branches**.
+   3. Click the **⋮** menu next to `feature-member-email` and select **Reset from parent**.
+   4. Confirm.
+
+   A reset replaces the branch's data **and schema** with the latest from its parent, so your step 6.2 changes are discarded. Connections drop for a moment, but the connection details don't change, so `.env` stays valid. You can't reset `production` (it has no parent), or a branch that has child branches.
+
+10. Confirm the reset with SQL:
+
+    ```bash
+    databricks psql --project lakebase-dotnet-lab --branch feature-member-email -- -c 'select count(*) from public."CareEvents"'
+    ```
+
+    Expect `5004` again. Jane is back to her 2 original events.
+
+11. Apply the branch-only changes again:
+
+    ```bash
+    dotnet run --project src/Lakebase.Cli -- lakebase db seed lab/data/branch-changes.sql
+    ```
+
+    Expect `==> 4 row(s) inserted or updated` (not `0`: the reset removed the earlier rows). Count once more:
+
+    ```bash
+    databricks psql --project lakebase-dotnet-lab --branch feature-member-email -- -c 'select count(*) from public."CareEvents"'
+    ```
+
+    Expect `5007`.
 
 ## 7. Stage V2 and migrate the branch
 
@@ -351,6 +424,8 @@ Expect `==> Branch deleted.`
 - **No "Lakebase branch … created" notification in step 5:** VS Code must be open on this folder with extension v0.7.2. Check the Lakebase SCM view and **View → Output → Lakebase SCM**.
 
 - **`Branches with an expiration date cannot have child branches`:** branch from `main` (`production`), not from another feature branch.
+
+- **`relation "public.careevents" does not exist` in SQL:** Postgres lowercases unquoted names, and these tables have mixed-case names. Quote them: `select count(*) from public."CareEvents"`. If it still fails, run `\dt` to check you're on a branch that has V1.
 
 - **Flyway lists a version as `Future`:** the database has a migration that isn't in your `db/migrations/`, for example one applied on another branch. Copy it in, or switch to the matching branch.
 
