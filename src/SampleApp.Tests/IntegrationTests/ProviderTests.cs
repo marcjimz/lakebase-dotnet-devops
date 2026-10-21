@@ -23,6 +23,28 @@ public class ProviderTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task GetProviders_DefaultsToFirstPageOfTen()
+    {
+        var page = await _client.GetFromJsonAsync<PagedResult<Provider>>("/api/providers");
+
+        Assert.NotNull(page);
+        Assert.Equal(1, page!.Page);
+        Assert.Equal(10, page.PageSize);
+        Assert.True(page.Items.Count <= 10);
+        Assert.Equal((int)Math.Ceiling(page.TotalCount / 10.0), page.TotalPages);
+        Assert.Equal(page.Items.OrderBy(p => p.Id).Select(p => p.Id), page.Items.Select(p => p.Id));
+    }
+
+    [Theory]
+    [InlineData("page=0")]
+    [InlineData("pageSize=101")]
+    public async Task GetProviders_OutOfRangePaging_ReturnsBadRequest(string query)
+    {
+        var response = await _client.GetAsync($"/api/providers?{query}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task CreateProvider_RoundTripsEmailAndNotes()
     {
         var provider = new
