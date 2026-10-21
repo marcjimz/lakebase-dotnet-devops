@@ -1,172 +1,309 @@
 # Lab: Lakebase branches + Flyway migrations from VS Code
 
-You will use the **Lakebase SCM** VS Code extension with an ASP.NET Core API. Each git branch gets its own copy-on-write Lakebase database branch. The app's models are ahead of the database: two Swagger endpoints are broken until you drag the staged migrations into place and run them on your branch, while `production` stays untouched.
+You will use the **Lakebase SCM** VS Code extension with an ASP.NET Core API. Every git branch gets its own copy-on-write Lakebase database branch. The C# models are ahead of the database, so two API endpoints fail until you apply the staged migrations on your branch, while `production` stays untouched.
 
-Time: about 45 minutes.
+Time: about 45 minutes. Run every command from the repo root.
 
-## How the pieces fit
+You need two terminals open in VS Code (**Terminal → New Terminal** twice):
 
-| Piece | Role |
-|-------|------|
-| `db/migrations/` | Live Flyway ledger. Starts with `V1__initial_create.sql` only. |
-| `lab/migrations/` | Staged lab steps (`V2`, `V3`). Flyway ignores this folder until you copy a file into `db/migrations/`. |
-| `lab/seed/seed.sql` | ~10k rows of sample members, providers, and care events for the V1 schema. Idempotent; not a migration. |
-| `lab/data/branch-changes.sql` | Branch-only data changes (step 6) to compare a feature branch with `production`. |
-| `src/SampleApp` | API. Its EF models already expect `Members.Email`, `Providers.Email`, and `Providers.Notes`. |
-| Lakebase SCM extension | Creates the Lakebase branch when you switch git branches and writes its connection to `.env`. |
-| `scripts/flyway-migrate.sh` | What the extension's **Run Migrations** button runs; it calls `lakebase db migrate` (pinned Flyway 11.20.3). |
-| `.env` | Two lines you set; the extension fills in the branch connection. No passwords, PATs, or client secrets. |
+- **Terminal A** for commands.
+- **Terminal B** for the API, which keeps running until you press `Ctrl+C`.
 
-| Database at | `GET /api/members` | `GET /api/providers` | `GET /api/careevents/member/{id}` |
-|-------------|--------------------|----------------------|-----------------------------------|
-| V1 (seeded) | 500 `column m.Email does not exist` | 500 `column p.Email does not exist` | 200, seeded events |
-| V1 + V2 | 200, 4,005 members (`email` null) | 500 | 200 |
-| V1 + V2 + V3 | 200 | 200, 1,003 providers; `notes` holds the old `CommentsText` | 200 |
+The repo pieces you will touch:
 
-## Steps at a glance
-
-| # | Where | You do | You see |
-|---|-------|--------|---------|
-| 1 | `main` | Connect the repo (`cp .env.example .env`) | Project + empty `production` branch in the Lakebase SCM view |
-| 2 | `main` | Deploy V1 with **Run Migrations** | Tables created on `production`, Flyway at v1 |
-| 3 | `main` | Load ~10k sample rows (`lakebase db seed`) | `10012 row(s) inserted or updated` |
-| 4 | `main` | Run the API | Members and providers broken (500), care events fine |
-| 5 | `feature/member-email` | `git checkout -b` | Lakebase branch created with the same schema and data |
-| 6 | feature, then `main` | Run `lab/data/branch-changes.sql` on the branch; compare with `main` | Branch has Jane's 3 new events + an edit; `production` doesn't |
-| 7 | feature | Drag in V2, **Run Migrations** | Members fixed on the branch only |
-| 8 | feature | Drag in V3, **Run Migrations** | Providers fixed, notes survive the rename, tests green |
-| 9 | feature | Commit | Migrations in Git |
-| 10 | `main` | Clean up | Branch deleted |
+- `db/migrations/` is the live Flyway ledger. It starts with only `V1__initial_create.sql`.
+- `lab/migrations/` holds the staged lab migrations (`V2`, `V3`). Flyway ignores them until you copy them into `db/migrations/`.
+- `lab/seed/seed.sql` is about 10,000 rows of sample data. `lab/data/branch-changes.sql` is a small set of edits for step 6.
+- `scripts/flyway-migrate.sh` is what the extension's **Run Migrations** button runs. Running it yourself does exactly the same thing.
 
 ## Facilitator setup (once per workshop)
 
-1. Create an empty Lakebase project (any name; this lab uses `lakebase-dotnet-lab`). Learners deploy the schema themselves in step 2.
+1. Create an empty Lakebase project. This lab uses `lakebase-dotnet-lab`:
+
    ```bash
    databricks postgres create-project lakebase-dotnet-lab -p <profile> \
      --json '{"spec":{"display_name":"Lakebase .NET SCM lab"}}'
    ```
-2. With several learners, give each their own project (steps 2–3 change `production`), or have one person do steps 2–3 for everyone. Learners other than the project owner need a Postgres role on the branches they use; grant the workshop group access in the Lakebase UI.
+
+2. Steps 2 and 3 change `production`. With several learners, give each learner their own project, or have one person do steps 2 and 3 for everyone.
+
+3. Learners other than the project owner need a Postgres role on the branches they use. Grant the workshop group access to the project in the Lakebase UI.
 
 ## Prerequisites
 
-- VS Code with the **Lakebase SCM** extension **v0.7.2** (0.6.x has no .NET support). It isn't on the Marketplace; install the VSIX from the [v0.7.2 release](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2):
-  ```bash
-  curl -fLO https://github.com/databricks-solutions/lakebase-scm-extension/releases/download/v0.7.2/lakebase-scm-extension-0.7.2.vsix
-  code --install-extension lakebase-scm-extension-0.7.2.vsix
-  code --list-extensions --show-versions | grep lakebase   # kevin-hartman.lakebase-scm-extension@0.7.2
-  ```
-  Or download `lakebase-scm-extension-0.7.2.vsix` from the release page and use **Extensions → … → Install from VSIX…**. Reload the window afterwards. If `code` isn't on your `PATH`, run **Shell Command: Install 'code' command in PATH** from the Command Palette. VS Code will also suggest C# Dev Kit from `.vscode/extensions.json`.
-- .NET SDK 10.0.401+, and it must be the `dotnet` your terminal finds first (the repo's `global.json` pins it, and the Run Migrations button runs `dotnet` in VS Code's terminal). Install it with the [.NET 10 installer](https://dotnet.microsoft.com/download/dotnet/10.0), or without admin rights:
-  ```bash
-  curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
-  bash dotnet-install.sh --version 10.0.401 --install-dir ~/.dotnet
-  export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH   # also add to your shell profile
-  ```
-  **Check from the repo root:** `dotnet --version` prints `10.0.401`. If it prints an older version (for example Homebrew's `dotnet@8` earlier on `PATH`), fix `PATH` before continuing, then restart VS Code so its terminal picks it up.
-- Databricks CLI, signed in: `databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com`. Note the profile name it saves; `.env` needs it.
-- Pinned Flyway: `dotnet run --project src/Lakebase.Cli -- lakebase db setup`
+1. **Lakebase SCM extension v0.7.2.** It isn't on the Marketplace, so install the VSIX from the [v0.7.2 release](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2):
+
+   ```bash
+   curl -fLO https://github.com/databricks-solutions/lakebase-scm-extension/releases/download/v0.7.2/lakebase-scm-extension-0.7.2.vsix
+   code --install-extension lakebase-scm-extension-0.7.2.vsix
+   code --list-extensions --show-versions | grep lakebase
+   ```
+
+   Expect `kevin-hartman.lakebase-scm-extension@0.7.2`. If `code` isn't found, run **Shell Command: Install 'code' command in PATH** from the Command Palette. In Cursor, use **Extensions → … → Install from VSIX…** instead.
+
+2. **.NET SDK 10.0.401.** Install it from the [.NET 10 page](https://dotnet.microsoft.com/download/dotnet/10.0), or without admin rights:
+
+   ```bash
+   curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
+   bash dotnet-install.sh --version 10.0.401 --install-dir ~/.dotnet
+   export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
+   ```
+
+   Add that `export` line to your shell profile (`~/.bash_profile` or `~/.zshrc`) so VS Code's terminals get it too. Then quit and reopen VS Code.
+
+3. **Databricks CLI, signed in:**
+
+   ```bash
+   databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com
+   databricks auth profiles
+   ```
+
+   Note the name of a profile for this host whose `Valid` column is `YES`. You'll put it in `.env` in step 1.
 
 ## 1. Connect the repo
 
-```bash
-git clone <your fork> && cd lakebase-dotnet-devops
-cp .env.example .env
-code .
-```
+1. Clone the repo and create your `.env`:
 
-Fill in the three lines at the top of `.env`. They are all you set by hand:
+   ```bash
+   git clone https://github.com/marcjimz/lakebase-dotnet-devops.git
+   cd lakebase-dotnet-devops
+   cp .env.example .env
+   ```
 
-```dotenv
-LAKEBASE_PROJECT_ID=lakebase-dotnet-lab
-DATABRICKS_HOST=https://fevm-real-time-mode-demo.cloud.databricks.com
-DATABRICKS_CONFIG_PROFILE=<your profile>   # from `databricks auth profiles`, Valid = YES
-```
+2. Open `.env` and set these three lines. They are the only ones you edit:
 
-Everything else is the **branch connection** (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`, `DATABASE_URL`). You don't type it: the extension writes it whenever you switch git branches or click **Refresh Credentials**, and until it has, the app and the Run Migrations script work it out themselves. They pair the checked-out git branch with its Lakebase branch (`main` → `production`, `feature/x` → `feature-x`) and ask the Lakebase API for its host. So on a fresh clone, on `main`, the three lines above are enough for step 2. The profile is required whenever `~/.databrickscfg` has more than one profile for the workspace: with only `DATABRICKS_HOST` the CLI can't choose, and the extension reports `sign-in completed but the session does not read back as authenticated`. The extension recognizes the project from `LAKEBASE_PROJECT_ID`; you do **not** need **Set Up Existing Project**. If you run it anyway, it rewrites `.env.example` and `.env` from its own template; restore the repo's copy with `git checkout -- .env.example`.
+   ```dotenv
+   LAKEBASE_PROJECT_ID=lakebase-dotnet-lab
+   DATABRICKS_HOST=https://fevm-real-time-mode-demo.cloud.databricks.com
+   DATABRICKS_CONFIG_PROFILE=<your profile from databricks auth profiles>
+   ```
 
-**Expect:** the Lakebase SCM view lists the project and its `production` branch, with `main` under **Current Tier**. `.env` may not have the branch connection lines yet; that's fine (see above). Click **Refresh Credentials** if you want to see them written.
+   Leave the rest alone. The extension fills in the branch connection (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`) when you switch branches. Until it does, the app and the migrate script pair your git branch with its Lakebase branch themselves (`main` → `production`).
+
+3. Install the pinned Flyway and open the folder in VS Code:
+
+   ```bash
+   dotnet run --project src/Lakebase.Cli -- lakebase db setup
+   code .
+   ```
+
+   Expect `==> Installed Flyway 11.20.3` (or `==> Flyway 11.20.3 at ...` if it's already installed). Use `cursor .` if you use Cursor.
+
+4. Confirm the setup in Terminal A:
+
+   ```bash
+   dotnet --version
+   git branch --show-current
+   ```
+
+   Expect `10.0.401` and `main`. The Lakebase SCM view lists the `lakebase-dotnet-lab` project, with `main` under **Current Tier**.
+
+Do **not** run **Set Up Existing Project**: the three `.env` lines are enough. If you run it anyway, it rewrites `.env.example` and `.env`. Restore them with `git checkout -- .env.example` and redo step 1.2.
 
 ## 2. Deploy V1 to production
 
-Stay on `main` (`git branch --show-current` prints `main`), so this targets `production`. `production` is empty. The **Schema Migrations** view (shown on `main`) lists the files in `db/migrations`: only `V1__initial_create.sql`. Click **Run Migrations** (or **Command Palette → Lakebase SCM: Run Migrations**, or the **Lab: migrate** task).
+`production` is empty. On `main`, click **Run Migrations** in the Lakebase SCM view, or run the same command in Terminal A:
 
-**Expect:** Flyway prints `Migrating schema "public" to version "1 - initial create"` and `Successfully applied 1 migration ... now at version v1`, followed by `lakebase db info` showing V1 as `Success`. The `Members`, `Providers`, and `CareEvents` tables now exist, all empty.
+```bash
+./scripts/flyway-migrate.sh
+```
 
-## 3. Load sample data
+Expect:
 
-Still on `main`, load the sample data into `production` (**Terminal → Run Task → Lab: seed sample data**):
+```
+Migrating schema "public" to version "1 - initial create"
+Successfully applied 1 migration to schema "public", now at version v1
+...
+Schema version: 1
+| Versioned | 1       | initial create        | SQL      | ... | Success  | No       |
+```
+
+Running it again prints `Schema "public" is up to date. No migration necessary.`
+
+## 3. Load the sample data
+
+Load about 10,000 rows into `production`:
 
 ```bash
 dotnet run --project src/Lakebase.Cli -- lakebase db seed
 ```
 
-**Expect:** `10012 row(s) inserted or updated` (4,005 members, 1,003 providers, 5,004 care events) in a few seconds the first time, `0 row(s)` on any re-run (it skips rows that exist).
+Expect:
 
-## 4. Look at the broken baseline
+```
+==> Seeding projects/lakebase-dotnet-lab/branches/production/endpoints/primary from lab/seed/seed.sql
+==> 10012 row(s) inserted or updated (re-runs skip existing rows)
+```
 
-Run the API (**Lab: run SampleApp (Swagger)**) and open http://localhost:5000/swagger.
+That is 4,005 members, 1,003 providers, and 5,004 care events. Running it again inserts `0` rows.
 
-- `GET /api/careevents/member/1` → **200** with Jane Doe's seeded events
-- `GET /api/members` → **500**, `column m.Email does not exist`
-- `GET /api/providers` → **500**, `column p.Email does not exist`
+## 4. See the broken baseline
 
-The data is there, but the C# models are ahead of the schema. Stop the app.
+1. Start the API in **Terminal B**:
+
+   ```bash
+   dotnet run --project src/SampleApp
+   ```
+
+   Wait for `Now listening on: http://localhost:5000`. Swagger is at http://localhost:5000/swagger if you prefer a browser.
+
+2. Call the three endpoints in **Terminal A**:
+
+   ```bash
+   curl -i http://localhost:5000/api/careevents/member/1 | head -1
+   curl -i http://localhost:5000/api/members | head -1
+   curl -i http://localhost:5000/api/providers | head -1
+   ```
+
+   Expect `HTTP/1.1 200 OK` for care events and `HTTP/1.1 500 Internal Server Error` for members and providers.
+
+3. See why members and providers fail:
+
+   ```bash
+   curl -s http://localhost:5000/api/members | head -1
+   curl -s http://localhost:5000/api/providers | head -1
+   ```
+
+   Expect:
+
+   ```
+   Npgsql.PostgresException (0x80004005): 42703: column m.Email does not exist
+   Npgsql.PostgresException (0x80004005): 42703: column p.Email does not exist
+   ```
+
+   The data is there, but the C# models expect columns the V1 schema doesn't have yet.
+
+4. Stop the API: press `Ctrl+C` in Terminal B.
 
 ## 5. Branch the code and the database
 
-```bash
-git checkout -b feature/member-email
-```
+1. Create a feature branch in Terminal A:
 
-A terminal checkout is enough: the extension watches `.git/HEAD` (and polls every 5 seconds), so it reacts to the terminal, the Source Control UI, or its own **Create Branch** command alike. VS Code must be open on the repo.
+   ```bash
+   git checkout -b feature/member-email
+   ```
 
-**Expect:** a notification `Lakebase branch "feature-member-email" created and connected.` `.env` now has `LAKEBASE_BRANCH_ID=feature-member-email`, a new `LAKEBASE_HOST`, and `DB_USERNAME` (your email). This branch is a copy-on-write copy of `production`: same schema and the same ~10k seeded rows, created in seconds without copying the data.
+   The extension watches `.git/HEAD`, so a terminal checkout is enough while VS Code is open on the repo. Within a few seconds it shows `Lakebase branch "feature-member-email" created and connected.`
+
+2. Confirm that `.env` now points at the new branch:
+
+   ```bash
+   grep -E '^(LAKEBASE_BRANCH_ID|LAKEBASE_HOST)=' .env
+   ```
+
+   Expect `LAKEBASE_BRANCH_ID=feature-member-email` and a new `LAKEBASE_HOST`. This branch is a copy-on-write copy of `production`: the same V1 schema and the same 10,012 rows, created in seconds without copying data.
 
 ## 6. Change data on the branch and compare
 
-Your branch's data is yours: writes stay on the branch and never reach `production`.
+1. Apply the branch-only changes: 3 new care events for Jane Doe and one edited description. Read `lab/data/branch-changes.sql` first if you like.
 
-1. Open `lab/data/branch-changes.sql` and read it: 3 new care events for Jane Doe (`M-1001`) and one edited description. Run it on the branch (**Lab: apply branch data changes**):
    ```bash
    dotnet run --project src/Lakebase.Cli -- lakebase db seed lab/data/branch-changes.sql
    ```
-   **Expect:** `4 row(s) inserted or updated` (3 inserts + 1 update); a re-run reports `0`.
-2. Run the API and call `GET /api/careevents/member/1`. **Expect:** 5 events, including the three `Branch-only: …` rows and `Annual wellness exam (edited on branch)`.
-3. Stop the app and `git checkout main`. Within a few seconds the extension points `.env` back at `production` (`LAKEBASE_BRANCH_ID=production`). Start the API again (it reads `.env` at startup) and call the same endpoint. **Expect:** Jane's original 2 events and the unedited `Annual wellness exam`.
-4. `git checkout feature/member-email` to continue. The extension reconnects `.env` to your branch; your changes are still there.
 
-Writing your own `INSERT`/`UPDATE` works the same way: save it as a `.sql` file and run `lakebase db seed <file>` on whichever branch is checked out.
+   Expect `==> 4 row(s) inserted or updated`. A re-run reports `0`.
+
+2. Start the API in Terminal B with `dotnet run --project src/SampleApp`, then look at Jane's events in Terminal A:
+
+   ```bash
+   curl -s http://localhost:5000/api/careevents/member/1
+   ```
+
+   Expect 5 events: `Routine blood panel`, `Annual wellness exam (edited on branch)`, `Branch-only: follow-up call`, `Branch-only: chest X-ray`, and `Branch-only: new prescription`. Press `Ctrl+C` in Terminal B.
+
+3. Switch to `main` and confirm the extension points `.env` back at `production`:
+
+   ```bash
+   git checkout main
+   grep '^LAKEBASE_BRANCH_ID=' .env
+   ```
+
+   Expect `LAKEBASE_BRANCH_ID=production`. Wait a few seconds and repeat the `grep` if it still shows the feature branch.
+
+4. Start the API again in Terminal B (it reads `.env` at startup), then repeat the call:
+
+   ```bash
+   curl -s http://localhost:5000/api/careevents/member/1
+   ```
+
+   Expect only Jane's original 2 events, `Routine blood panel` and the unedited `Annual wellness exam`. The branch's writes never reached `production`. Press `Ctrl+C` in Terminal B.
+
+5. Go back to your branch and confirm `.env` follows:
+
+   ```bash
+   git checkout feature/member-email
+   grep '^LAKEBASE_BRANCH_ID=' .env
+   ```
+
+   Expect `LAKEBASE_BRANCH_ID=feature-member-email`.
 
 ## 7. Stage V2 and migrate the branch
 
-Drag `lab/migrations/V2__add_member_email.sql` into `db/migrations/` (or `cp lab/migrations/V2__add_member_email.sql db/migrations/`).
+1. Copy V2 into the live ledger. Dragging the file in VS Code's Explorer works too.
 
-Click **Run Migrations** in the Lakebase SCM view, or run the **Lab: migrate** task. Flyway prints `Successfully applied 1 migration ... now at version v2`.
+   ```bash
+   cp lab/migrations/V2__add_member_email.sql db/migrations/
+   ```
 
-**Expect:**
-- `GET /api/members` → 200 with the 4,005 seeded members (`email` null); `POST /api/members` with an `email` round-trips.
-- `GET /api/providers` → still 500.
-- The extension's schema diff for the branch shows `Members.Email` added versus `production`.
-- `production` is unchanged: `git checkout main`, run the app, and members is still 500.
+2. Click **Run Migrations**, or run:
 
-## 8. Stage V3
+   ```bash
+   ./scripts/flyway-migrate.sh
+   ```
 
-Back on `feature/member-email` (or a new branch), copy `lab/migrations/V3__provider_email_and_notes.sql` into `db/migrations/` and run migrations again.
+   Expect `Successfully applied 1 migration to schema "public", now at version v2`.
 
-**Expect:** `GET /api/providers` → 200 with the 1,003 seeded providers; each `notes` value is the old `CommentsText`, carried through the rename (e.g. `GET /api/providers/1` → Dr. Ada Lovelace, "Accepting new patients"). **Lab: integration tests** pass (8 tests).
+3. Start the API in Terminal B with `dotnet run --project src/SampleApp`, then check in Terminal A:
 
-## 9. Commit it
+   ```bash
+   curl -i http://localhost:5000/api/members | head -1
+   curl -i http://localhost:5000/api/providers | head -1
+   ```
+
+   Expect `HTTP/1.1 200 OK` for members (4,005 rows, `email` null) and still `HTTP/1.1 500 Internal Server Error` for providers. Press `Ctrl+C` in Terminal B.
+
+`production` doesn't have V2. If you `git checkout main`, members fails there again.
+
+## 8. Stage V3 and run the tests
+
+1. Copy V3 in and migrate. V3 adds `Providers.Email` and renames `CommentsText` to `Notes`.
+
+   ```bash
+   cp lab/migrations/V3__provider_email_and_notes.sql db/migrations/
+   ./scripts/flyway-migrate.sh
+   ```
+
+   Expect `Successfully applied 1 migration to schema "public", now at version v3`.
+
+2. Start the API in Terminal B, then check providers in Terminal A:
+
+   ```bash
+   curl -i http://localhost:5000/api/providers | head -1
+   curl -s http://localhost:5000/api/providers/1
+   ```
+
+   Expect `HTTP/1.1 200 OK`. Provider 1 is `Dr. Ada Lovelace`, with `"notes":"Accepting new patients"`: the old `CommentsText` survived the rename. Press `Ctrl+C` in Terminal B.
+
+3. Run the integration tests against your branch:
+
+   ```bash
+   dotnet test --filter Category=Integration
+   ```
+
+   Expect `Passed!  - Failed:     0, Passed:     8`.
+
+## 9. Commit the migrations
 
 ```bash
 git add db/migrations
 git commit -m "Add member and provider email columns"
 ```
 
-Never edit a migration after it has been applied anywhere; fix forward with a new `V{n}` file.
+Never edit a migration after it has been applied anywhere. Fix forward with a new `V{n}` file instead.
 
 ## 10. Clean up
 
-Delete the feature branch from the extension (it deletes the Lakebase branch too), or:
+Delete the branch from the extension's Lakebase SCM view, which removes the Lakebase branch too. Or run:
 
 ```bash
 git checkout main
@@ -174,17 +311,23 @@ git branch -D feature/member-email
 LAKEBASE_ALLOW_BRANCH_DELETE=true dotnet run --project src/Lakebase.Cli -- lakebase platform branch delete feature-member-email
 ```
 
+Expect `==> Branch deleted.`
+
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `A new access token could not be retrieved because the refresh token is invalid` | `databricks auth login --host <workspace-url>` |
-| `session does not read back as authenticated ... default auth: cannot configure default credentials`, or `<a> and <b> match https://<workspace>` | Several CLI profiles point at the workspace. Set `DATABRICKS_CONFIG_PROFILE=<profile>` in `.env` (one that `databricks current-user me -p <profile>` accepts) and reload the window. |
-| `No branch connection: set LAKEBASE_PROJECT_ID in .env and check out a git branch whose Lakebase branch exists` | Check the three `.env` lines from step 1. The Lakebase branch for your git branch must exist (`main` → `production`; feature branches are created by the extension when you switch to them). Or click **Refresh Credentials**. |
-| `A compatible .NET SDK was not found. Requested SDK version: 10.0.401` | Your terminal's `dotnet` is an older install (e.g. Homebrew `dotnet@8` on `PATH`). Put .NET 10 first (`export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH`), check `dotnet --version`, and restart VS Code. |
-| Extension shows no .NET support | You have an older build (0.6.x); install the [v0.7.2 VSIX](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2) and reload the window. |
-| `Branches with an expiration date cannot have child branches` | Lakebase branches with a TTL can't be branched from. Branch from `main` (`production`, no TTL) rather than from another feature branch. |
-| Flyway says a version is `Future` | The database has a migration that isn't in your `db/migrations/` (e.g. applied on another branch); copy it in or switch branches. |
+- **`A compatible .NET SDK was not found. Requested SDK version: 10.0.401`:** your terminal's `dotnet` is an older install (for example Homebrew `dotnet@8`). Put .NET 10 first on `PATH` (prerequisite 2), check `dotnet --version`, and restart VS Code.
+
+- **`A new access token could not be retrieved because the refresh token is invalid`:** run `databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com` again.
+
+- **`session does not read back as authenticated`, `cannot configure default credentials`, or `<a> and <b> match https://<workspace>`:** several CLI profiles point at the workspace. Set `DATABRICKS_CONFIG_PROFILE` in `.env` to a profile that `databricks current-user me -p <profile>` accepts, then reload the window.
+
+- **`No branch connection: set LAKEBASE_PROJECT_ID in .env ...`:** check the three `.env` lines from step 1. The Lakebase branch for your git branch must exist: `main` maps to `production`, and the extension creates feature branches when you switch to them. Clicking **Refresh Credentials** also writes the connection.
+
+- **No "Lakebase branch … created" notification in step 5:** VS Code must be open on this folder with extension v0.7.2. Check the Lakebase SCM view and **View → Output → Lakebase SCM**.
+
+- **`Branches with an expiration date cannot have child branches`:** branch from `main` (`production`), not from another feature branch.
+
+- **Flyway lists a version as `Future`:** the database has a migration that isn't in your `db/migrations/`, for example one applied on another branch. Copy it in, or switch to the matching branch.
 
 ## Notes for the repo's CI
 
