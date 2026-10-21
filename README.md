@@ -43,6 +43,7 @@ When unset, the mode is inferred: `DATABRICKS_TOKEN` → `pat`, client id + secr
 
 - .NET 10 SDK
 - Databricks CLI, signed in with `databricks auth login`
+- For the [lab](docs/LAB.md): VS Code with the Lakebase SCM extension [v0.7.2 VSIX](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2)
 - Flyway CLI 11.20.3 (`dotnet run --project src/Lakebase.Cli -- lakebase db setup` — pinned, checksum-verified)
 - A Lakebase project in your Databricks workspace
 

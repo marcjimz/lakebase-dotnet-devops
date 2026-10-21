@@ -49,7 +49,13 @@ Time: about 45 minutes.
 
 ## Prerequisites
 
-- VS Code with the **Lakebase SCM** extension 0.7.1 or later (0.6.x has no .NET support). Install the VSIX with `code --install-extension lakebase-scm-extension-<version>.vsix`. VS Code will also suggest C# Dev Kit from `.vscode/extensions.json`.
+- VS Code with the **Lakebase SCM** extension **v0.7.2** (0.6.x has no .NET support). It isn't on the Marketplace; install the VSIX from the [v0.7.2 release](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2):
+  ```bash
+  curl -fLO https://github.com/databricks-solutions/lakebase-scm-extension/releases/download/v0.7.2/lakebase-scm-extension-0.7.2.vsix
+  code --install-extension lakebase-scm-extension-0.7.2.vsix
+  code --list-extensions --show-versions | grep lakebase   # kevin-hartman.lakebase-scm-extension@0.7.2
+  ```
+  Or download `lakebase-scm-extension-0.7.2.vsix` from the release page and use **Extensions → … → Install from VSIX…**. Reload the window afterwards. If `code` isn't on your `PATH`, run **Shell Command: Install 'code' command in PATH** from the Command Palette. VS Code will also suggest C# Dev Kit from `.vscode/extensions.json`.
 - .NET SDK 10.0.401+ on `PATH` (`dotnet --version`). VS Code's terminal must see it, since the Run Migrations button runs `dotnet`.
 - Databricks CLI, signed in: `databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com`
 - Pinned Flyway: `dotnet run --project src/Lakebase.Cli -- lakebase db setup`
@@ -161,7 +167,7 @@ LAKEBASE_ALLOW_BRANCH_DELETE=true dotnet run --project src/Lakebase.Cli -- lakeb
 | `A new access token could not be retrieved because the refresh token is invalid` | `databricks auth login --host <workspace-url>` |
 | `No branch connection in .env` | Switch git branches once so the extension writes the connection, or click **Refresh Credentials**. |
 | `global.json` / SDK not found from the button | VS Code's terminal is using an older `dotnet`; put .NET 10 first on `PATH` and reload the window. |
-| Extension shows no .NET support | Upgrade to extension 0.7.1+. |
+| Extension shows no .NET support | You have an older build (0.6.x); install the [v0.7.2 VSIX](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2) and reload the window. |
 | `Branches with an expiration date cannot have child branches` | Lakebase branches with a TTL can't be branched from. Branch from `main` (`production`, no TTL) rather than from another feature branch. |
 | Flyway says a version is `Future` | The database has a migration that isn't in your `db/migrations/` (e.g. applied on another branch); copy it in or switch branches. |
 
