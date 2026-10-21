@@ -9,12 +9,38 @@ namespace SampleApp.Controllers;
 [Route("api/[controller]")]
 public class MembersController : ControllerBase
 {
+    public const int DefaultPageSize = 10;
+    public const int MaxPageSize = 100;
+
     private readonly AppDbContext _db;
     public MembersController(AppDbContext db) => _db = db;
 
+    /// <summary>Members ordered by id, one page at a time.</summary>
+    /// <param name="page">1-based page number.</param>
+    /// <param name="pageSize">Members per page (1–100, default 10).</param>
     [HttpGet]
-    public async Task<ActionResult<List<Member>>> GetAll()
-        => await _db.Members.ToListAsync();
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResult<Member>>> GetAll(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = DefaultPageSize)
+    {
+        if (page < 1)
+            ModelState.AddModelError(nameof(page), "page must be 1 or greater.");
+        if (pageSize is < 1 or > MaxPageSize)
+            ModelState.AddModelError(nameof(pageSize), $"pageSize must be between 1 and {MaxPageSize}.");
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var totalCount = await _db.Members.CountAsync();
+        var items = await _db.Members
+            .OrderBy(m => m.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+        return new PagedResult<Member>(items, page, pageSize, totalCount, totalPages);
+    }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<Member>> GetById(int id)
