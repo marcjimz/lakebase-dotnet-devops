@@ -30,7 +30,7 @@ databricks auth profiles
 cp .env.example .env
 ```
 
-Set three lines in `.env`: `LAKEBASE_PROJECT_ID`, `DATABRICKS_HOST`, and `DATABRICKS_CONFIG_PROFILE` (a profile from `databricks auth profiles` whose `Valid` column is `YES`; required when several profiles point at the same workspace).
+Set three lines in `.env`: `LAKEBASE_PROJECT_ID` (the project **ID**, the last part of `projects/<id>`, not its display name; `databricks postgres list-projects` shows both), `DATABRICKS_HOST`, and `DATABRICKS_CONFIG_PROFILE` (a profile from `databricks auth profiles` whose `Valid` column is `YES`; required when several profiles point at the same workspace).
 
 Locally you authenticate as yourself: no PAT, client secret, or database password goes in `.env`. The rest of the file is the branch connection (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`, `DATABASE_URL`), which the Lakebase SCM extension writes on every git branch switch (or `lakebase platform branch create` writes). Until it has, the app and the CLI pair the checked-out git branch with its Lakebase branch (`main` → `production`, `feature/x` → `feature-x`) and look up the host through the Lakebase API. Either way they mint a short-lived Postgres credential from your login.
 
@@ -85,6 +85,8 @@ Swagger: `http://localhost:5000/swagger`
 ./scripts/run-tests.sh                                  # unit + integration, against the branch in .env
 dotnet test --filter "Category!=Integration"            # unit tests only, no database
 ```
+
+On Windows, run the `scripts/*.sh` files from Git Bash (VS Code's default terminal here via `.vscode/settings.json`), or use the PowerShell equivalents in [docs/LAB.md](docs/LAB.md), e.g. `dotnet test --logger "console;verbosity=normal"`. The pinned Flyway installer supports macOS (arm64/x64), Linux x64, and Windows x64.
 
 Integration tests read the branch's latest Flyway version from `flyway_schema_history`. Tests that need a later migration are marked `[RequiresSchemaFact(n)]` / `[RequiresSchemaTheory(n)]` and are skipped, with the migration to apply, instead of failing. If the database can't be reached, they run and fail.
 

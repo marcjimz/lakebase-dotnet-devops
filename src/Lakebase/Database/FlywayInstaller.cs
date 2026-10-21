@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 namespace Lakebase;
 
 /// <summary>
-/// Installs the repo-pinned Flyway CLI with checksum verification (macOS arm64/x64, Linux x64).
+/// Installs the repo-pinned Flyway CLI with checksum verification (macOS arm64/x64, Linux x64, Windows x64).
 /// </summary>
 public static class FlywayInstaller
 {
@@ -23,6 +23,9 @@ public static class FlywayInstaller
         ["linux-x64"] = (
             $"flyway-commandline-{DefaultVersion}-linux-x64.tar.gz",
             "bc0c194fc784578a9f491495f3e4196aafde3182fac11d4e01f6398d7967cd98"),
+        ["win-x64"] = (
+            $"flyway-commandline-{DefaultVersion}-windows-x64.zip",
+            "7264300bbba602244c1dbe2fe5217dea029d359ea8574b243cb587976a027de4"),
     };
 
     public static string Version =>
@@ -42,7 +45,12 @@ public static class FlywayInstaller
 
     public static string InstallDir => Path.Combine(CacheRoot, $"flyway-{Version}");
 
-    public static string BinaryPath => Path.Combine(InstallDir, "flyway");
+    public static string BinaryPath => Path.Combine(InstallDir, BinaryFileName(OperatingSystem.IsWindows()));
+
+    /// <summary>Flyway's launcher: a shell script on macOS/Linux, a batch file on Windows.</summary>
+    public static string BinaryFileName(bool windows) => windows ? "flyway.cmd" : "flyway";
+
+    public static bool IsSupported(string runtimeIdentifier) => Artifacts.ContainsKey(runtimeIdentifier);
 
     public static async Task<string> EnsureInstalledAsync(CancellationToken ct = default)
     {
@@ -66,7 +74,7 @@ public static class FlywayInstaller
         var home = Environment.GetEnvironmentVariable("FLYWAY_HOME");
         if (!string.IsNullOrEmpty(home))
         {
-            var candidate = Path.Combine(home, "flyway");
+            var candidate = Path.Combine(home, BinaryFileName(OperatingSystem.IsWindows()));
             if (File.Exists(candidate))
                 return candidate;
         }
@@ -93,7 +101,7 @@ public static class FlywayInstaller
         {
             throw new InvalidOperationException(
                 $"Unsupported platform for pinned Flyway CLI: {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}. " +
-                "Supported: macOS arm64, macOS x86_64 (Rosetta), Linux x86_64.");
+                "Supported: macOS arm64, macOS x86_64 (Rosetta), Linux x86_64, Windows x86_64.");
         }
 
         var tmp = Directory.CreateTempSubdirectory("lakebase-flyway-");
@@ -118,9 +126,14 @@ public static class FlywayInstaller
 
             var extractRoot = Path.Combine(tmp.FullName, "extract");
             Directory.CreateDirectory(extractRoot);
-            await using (var input = File.OpenRead(archive))
-            await using (var gzip = new GZipStream(input, CompressionMode.Decompress))
+            if (spec.Artifact.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             {
+                ZipFile.ExtractToDirectory(archive, extractRoot, overwriteFiles: true);
+            }
+            else
+            {
+                await using var input = File.OpenRead(archive);
+                await using var gzip = new GZipStream(input, CompressionMode.Decompress);
                 TarFile.ExtractToDirectory(gzip, extractRoot, overwriteFiles: true);
             }
 
@@ -161,7 +174,10 @@ public static class FlywayInstaller
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
             && RuntimeInformation.OSArchitecture == Architecture.X64)
             return "linux-x64";
-        return $"{(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" : RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" : "unknown")}-{RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()}";
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            && RuntimeInformation.OSArchitecture == Architecture.X64)
+            return "win-x64";
+        return $"{(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" : RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win" : "unknown")}-{RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()}";
     }
 
     private static void EnsureExecutable(string path)
