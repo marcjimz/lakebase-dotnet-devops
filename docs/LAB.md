@@ -2,7 +2,7 @@
 
 You will use the **Lakebase SCM** VS Code extension with an ASP.NET Core API. Every git branch gets its own copy-on-write Lakebase database branch. The C# models are ahead of the database, so two API endpoints fail until you apply the staged migrations on your branch, while `production` stays untouched.
 
-Time: about 45 minutes. Run every command from the repo root.
+Time: about 45 minutes. Run every command from the repo root. Each line in a code block is a separate command: run them in order, one line at a time (pasting the whole block into the terminal also works). Don't join two lines into one.
 
 You need two terminals open in VS Code (**Terminal → New Terminal** twice):
 
@@ -33,13 +33,25 @@ The repo pieces you will touch:
 
 1. **Lakebase SCM extension v0.7.2.** It isn't on the Marketplace, so install the VSIX from the [v0.7.2 release](https://github.com/databricks-solutions/lakebase-scm-extension/releases/tag/v0.7.2):
 
+   Download it:
+
    ```bash
    curl -fLO https://github.com/databricks-solutions/lakebase-scm-extension/releases/download/v0.7.2/lakebase-scm-extension-0.7.2.vsix
-   code --install-extension lakebase-scm-extension-0.7.2.vsix
-   code --list-extensions --show-versions | grep lakebase
    ```
 
-   Expect `kevin-hartman.lakebase-scm-extension@0.7.2`. If `code` isn't found, run **Shell Command: Install 'code' command in PATH** from the Command Palette. In Cursor, use **Extensions → … → Install from VSIX…** instead.
+   Install it in Cursor:
+
+   ```bash
+   cursor --install-extension lakebase-scm-extension-0.7.2.vsix
+   ```
+
+   Or in VS Code:
+
+   ```bash
+   code --install-extension lakebase-scm-extension-0.7.2.vsix
+   ```
+
+   If the command isn't found, use **Extensions → … → Install from VSIX…** and pick the downloaded file. Reload the window afterwards. The Extensions view should show **Lakebase SCM** version 0.7.2.
 
 2. **.NET SDK 10.0.401.** Install it from the [.NET 10 page](https://dotnet.microsoft.com/download/dotnet/10.0), or without admin rights:
 
@@ -80,16 +92,29 @@ The repo pieces you will touch:
 
    Leave the rest alone. The extension fills in the branch connection (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`) when you switch branches. Until it does, the app and the migrate script pair your git branch with its Lakebase branch themselves (`main` → `production`).
 
-3. Install the pinned Flyway and open the folder in VS Code:
+3. Install the pinned Flyway:
 
    ```bash
    dotnet run --project src/Lakebase.Cli -- lakebase db setup
+   ```
+
+   Expect `==> Installed Flyway 11.20.3`, or `==> Flyway 11.20.3 at ...` if it's already installed.
+
+4. Open the repo folder in your editor. Skip this if it's already open. In Cursor:
+
+   ```bash
+   cursor .
+   ```
+
+   In VS Code:
+
+   ```bash
    code .
    ```
 
-   Expect `==> Installed Flyway 11.20.3` (or `==> Flyway 11.20.3 at ...` if it's already installed). Use `cursor .` if you use Cursor.
+   If you get `command not found`, use **File → Open Folder…** instead, or run **Shell Command: Install 'cursor' command in PATH** (or `'code'` in VS Code) from the Command Palette.
 
-4. Confirm the setup in Terminal A:
+5. Confirm the setup in Terminal A:
 
    ```bash
    dotnet --version
