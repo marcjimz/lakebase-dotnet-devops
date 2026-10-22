@@ -16,7 +16,21 @@ The repo pieces you will touch:
 - `lab/seed/seed.sql` is about 10,000 rows of sample data. `lab/data/branch-changes.sql` is a small set of edits for step 6.
 - `scripts/flyway-migrate.sh` and `scripts/run-tests.sh` are what the extension's **Run Migrations** and **Run Tests** buttons run. Running them yourself does exactly the same thing.
 
-You work in **your own fork** of the repo, so you can create and push branches. `<project-id>` in the commands below is your Lakebase **project ID**, which your facilitator gives you. Replace it everywhere, including the angle brackets. The project ID is not the project's display name: the Lakebase UI shows the display name (for example `Lakebase .NET SCM lab`), while `.env` and every command need the ID (for example `lakebase-dotnet-lab`), the last part of `projects/<project-id>`.
+You work in **your own fork** of the repo, so you can create and push branches.
+
+### Values you'll need
+
+Commands use these placeholders. Replace each one everywhere, including the angle brackets:
+
+- `<workspace-url>`: your Databricks workspace URL, as shown in your browser's address bar when you're signed in. For example `https://<workspace>.cloud.databricks.com` on AWS, `https://adb-<id>.<n>.azuredatabricks.net` on Azure, or `https://<id>.gcp.databricks.com` on Google Cloud. Your facilitator gives it to you.
+- `<profile>`: the Databricks CLI profile you create for that workspace (prerequisite 3).
+- `<project-id>`: your Lakebase **project ID**, which your facilitator gives you. It isn't the display name: the Lakebase UI shows the display name (for example `Lakebase .NET SCM lab`), while `.env` and every command need the ID (for example `lakebase-dotnet-lab`), the last part of `projects/<project-id>`. Step 1.3 shows how to look it up.
+- `<your-github-user>`: your GitHub username, for your fork.
+
+Two Lakebase names are the defaults for a new project, so the lab uses them as written:
+
+- `production` is the project's default branch, which git `main` pairs with. If your project's default branch has another name, set `LAKEBASE_MAIN_BRANCH_ID=<name>` in `.env` and use that name wherever the lab says `production`. `databricks postgres list-branches projects/<project-id> -p <profile>` lists the branches.
+- `primary` is the branch's compute endpoint. If yours is different, set `LAKEBASE_ENDPOINT=<endpoint-id>` in `.env`.
 
 ### On Windows
 
@@ -44,7 +58,7 @@ Every command is shown twice: a macOS/Linux (bash) block, and under it a collaps
 
    </details>
 
-2. Steps 2 and 3 change `production`. With several learners, give each learner their own project (for example `training-<name>`), or have one person do steps 2 and 3 for everyone. Send each learner their **project ID**, not the display name.
+2. Steps 2 and 3 change the project's default branch, `production`. With several learners, give each learner their own project (for example `training-<name>`), or have one person do steps 2 and 3 for everyone. Send each learner the **workspace URL** and their **project ID** (not the display name).
 
 3. Learners other than the project owner need a Postgres role on the branches they use. Grant the workshop group access to the project in the Lakebase UI.
 
@@ -148,20 +162,20 @@ Every command is shown twice: a macOS/Linux (bash) block, and under it a collaps
 3. **Databricks CLI, signed in:**
 
    ```bash
-   databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com
+   databricks auth login --host <workspace-url>
    databricks auth profiles
    ```
 
    <details><summary>Windows (PowerShell)</summary>
 
    ```powershell
-   databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com
+   databricks auth login --host <workspace-url>
    databricks auth profiles
    ```
 
    </details>
 
-   Note the name of a profile for this host whose `Valid` column is `YES`. You'll put it in `.env` in step 1.
+   Note the name of a profile for your workspace URL whose `Valid` column is `YES`. `databricks auth login` names the profile after the workspace unless you pass `--profile <name>`. You'll put it in `.env` in step 1.
 
 4. **A GitHub account**, signed in to git on this machine, so you can push to your fork.
 
@@ -211,11 +225,11 @@ Every command is shown twice: a macOS/Linux (bash) block, and under it a collaps
 
    ```dotenv
    LAKEBASE_PROJECT_ID=<project-id>
-   DATABRICKS_HOST=https://fevm-real-time-mode-demo.cloud.databricks.com
+   DATABRICKS_HOST=<workspace-url>
    DATABRICKS_CONFIG_PROFILE=<profile>
    ```
 
-   `LAKEBASE_PROJECT_ID` must be the project ID from the previous step, not the display name. `DATABRICKS_CONFIG_PROFILE` must be a profile for this workspace: `DEFAULT` often points at a different one.
+   `LAKEBASE_PROJECT_ID` must be the project ID from the previous step, not the display name. `DATABRICKS_HOST` is your workspace URL, with `https://` and no trailing path. `DATABRICKS_CONFIG_PROFILE` must be a profile for that same URL: `DEFAULT` often points at a different workspace.
 
    Leave the rest alone. The extension fills in the branch connection (`LAKEBASE_BRANCH_ID`, `LAKEBASE_HOST`, `DB_USERNAME`) when you switch branches. Until it does, the app and the migrate script pair your git branch with its Lakebase branch themselves (`main` → `production`).
 
@@ -961,7 +975,7 @@ Expect `==> Branch deleted.` `production` keeps V1–V3 and the sample data.
 
 - **`A compatible .NET SDK was not found. Requested SDK version: 10.0.401`:** your terminal's `dotnet` is an older install (for example Homebrew `dotnet@8`, or an older SDK under `C:\Program Files\dotnet` on Windows). Put .NET 10 first on `PATH` (prerequisite 2), check `dotnet --version`, and restart VS Code. On Windows, if `where.exe dotnet` lists `C:\Program Files\dotnet\dotnet.exe` first, run the "only if an older install is listed first" lines in prerequisite 2.
 
-- **`A new access token could not be retrieved because the refresh token is invalid`:** run `databricks auth login --host https://fevm-real-time-mode-demo.cloud.databricks.com` again.
+- **`A new access token could not be retrieved because the refresh token is invalid`:** run `databricks auth login --host <workspace-url>` again.
 
 - **`session does not read back as authenticated`, `cannot configure default credentials`, or `<a> and <b> match https://<workspace>`:** several CLI profiles point at the workspace. Set `DATABRICKS_CONFIG_PROFILE` in `.env` to a profile that `databricks current-user me -p <profile>` accepts, then reload the window.
 
@@ -971,7 +985,7 @@ Expect `==> Branch deleted.` `production` keeps V1–V3 and the sample data.
 
 - **`Project with name 'projects/<id>' not found`** (for example from `Failed to create branch: databricks postgres list-branches ... --profile DEFAULT`): the CLI asked a workspace that doesn't have that project. Check three things, then reload the window and switch branches again (or click **Create Branch** next to `No Lakebase branch`):
   - `LAKEBASE_PROJECT_ID` is the project **ID**, not the display name. `databricks postgres list-projects -p <profile>` lists both.
-  - `DATABRICKS_CONFIG_PROFILE` is a profile for `https://fevm-real-time-mode-demo.cloud.databricks.com`. `databricks auth profiles` shows each profile's host; `DEFAULT` is often a different workspace.
+  - `DATABRICKS_CONFIG_PROFILE` is a profile for the same URL as `DATABRICKS_HOST`. `databricks auth profiles` shows each profile's host; `DEFAULT` is often a different workspace.
   - You have access to the project. If `list-projects` doesn't show it, ask your facilitator.
 
 - **`git push` fails with `Permission denied` or `403`:** `origin` points at the original repo instead of your fork. Check with `git remote -v`, then run `git remote set-url origin https://github.com/<your-github-user>/lakebase-dotnet-devops.git`.
